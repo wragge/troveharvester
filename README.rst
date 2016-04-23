@@ -50,9 +50,14 @@ A  ``data`` directory will be automatically created to hold all of your harvests
 
 Options:
 
-* --max [integer] -- specify a maximum number of articles to harvest (multiples of 20)
-* --pdf -- save a copy of each each as a PDF (this makes the harvest a *lot* slower as you have to allow a couple of seconds for each PDF to generate)
-* --text -- save the OCRd text of each article into a separate ``.txt`` file
+--max [integer]
+    specify a maximum number of articles to harvest (multiples of 20)
+
+--pdf
+    save a copy of each each as a PDF (this makes the harvest a *lot* slower as you have to allow a couple of seconds for each PDF to generate)
+
+--text
+    save the OCRd text of each article into a separate ``.txt`` file
 
 Restart a harvest
 -----------------
