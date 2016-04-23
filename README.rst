@@ -44,7 +44,9 @@ To start a new harvest you can just do:
 
     $ cd mytroveharvests
     $ source bin/activate
-    $ troveharvester start [Trove query] [Trove API key]
+    $ troveharvester start "[Trove query]" [Trove API key]
+
+The Trove query can either be a url copy and pasted from a search in the `Trove web interface <http://trove.nla.gov.au/newspaper/>`_, or a Trove API query url constructed using something like the `Trove API Console <https://troveconsole.herokuapp.com/>`_. Enclose the url in double quotes.
 
 A  ``data`` directory will be automatically created to hold all of your harvests. Each harvest will be saved into a directory named with a current timestamp. Details of harvested articles are written to a CSV file named ``results.csv``. The harvest configuration details are also saved to a ``metadata.json`` file.
 
