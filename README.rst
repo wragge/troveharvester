@@ -31,9 +31,9 @@ Before you do any harvesting you need to get yourself a `Trove API key <http://h
 
 There are three basic commands:
 
-* start -- start a new harvest
-* restart -- restart a stalled harvest
-* report -- view harvest details
+* **start** -- start a new harvest
+* **restart** -- restart a stalled harvest
+* **report** -- view harvest details
 
 Start a harvest
 ---------------
@@ -53,10 +53,10 @@ Options:
 --max [integer]
     specify a maximum number of articles to harvest (multiples of 20)
 
---pdf
+\--pdf
     save a copy of each each as a PDF (this makes the harvest a *lot* slower as you have to allow a couple of seconds for each PDF to generate)
 
---text
+\--text
     save the OCRd text of each article into a separate ``.txt`` file
 
 Restart a harvest
