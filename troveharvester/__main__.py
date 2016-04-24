@@ -1,3 +1,13 @@
+"""
+TroveHarvester - A tool for harvesting digitised newspaper articles from Trove
+
+Written in 2016 by Tim Sherratt tim@discontents.com.au
+
+To the extent possible under law, the author(s) have dedicated all copyright and related and neighboring rights to this software to the public domain worldwide. This software is distributed without any warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication along with this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
+"""
+
 import trove
 from harvest import TroveHarvester, ServerError
 import urllib
@@ -49,7 +59,7 @@ class Harvester(TroveHarvester):
 
     def __init__(self, trove_api, **kwargs):
         self.data_dir = kwargs.get('data_dir')
-        self.csv_file = '{}results.csv'.format(self.data_dir)
+        self.csv_file = os.path.join(self.data_dir, 'results.csv')
         self.pdf = kwargs.get('pdf')
         self.text = kwargs.get('text')
         TroveHarvester.__init__(self, trove_api, **kwargs)
@@ -120,14 +130,16 @@ class Harvester(TroveHarvester):
                     if self.pdf:
                         pdf_url = self.get_pdf_url(article_id)
                         if pdf_url:
-                            urllib.urlretrieve(pdf_url, '{}/pdf/{}.pdf'.format(self.data_dir, article_id))
+                            pdf_file = os.path.join(self.data_dir, 'pdf', '{}.pdf'.format(article_id))
+                            urllib.urlretrieve(pdf_url, pdf_file)
                     if self.text:
                         text = article.get('articleText')
                         if text:
                             text = re.sub('<[^<]+?>', '', text)
                             text = re.sub("\s\s+", " ", text)
-                            with open('{}/text/{}.txt'.format(self.data_dir, article_id), 'w') as text_file:
-                                text_file.write(text.encode('utf-8'))
+                            text_file = os.path.join(self.data_dir, 'text', '{}.text'.format(article_id))
+                            with open(text_file, 'w') as text_output:
+                                text_output.write(text.encode('utf-8'))
             time.sleep(0.5)
             self.harvested += self.get_highest_n(results)
             print 'Harvested: {}'.format(self.harvested)
@@ -170,7 +182,7 @@ def prepare_query(query, text, api_key):
             query += '&include=articleText'
         return query
     else:
-        safe = ['q', 'l-category']
+        safe = ['q', 'l-category', 'l-title']
         new_params = {}
         dates = {}
         keywords = []
@@ -245,7 +257,7 @@ def save_meta(args, data_dir, harvest):
     meta['text'] = args.text
     meta['harvest'] = harvest
     meta['date_started'] = datetime.datetime.now().isoformat()
-    with open('{}metadata.json'.format(data_dir), 'wb') as meta_file:
+    with open(os.path.join(data_dir, 'metadata.json'), 'wb') as meta_file:
         json.dump(meta, meta_file, indent=4)
 
 
@@ -253,14 +265,14 @@ def get_harvest(args):
     if args.harvest:
         harvest = args.harvest
     else:
-        harvests = sorted(os.listdir(os.path.join(os.getcwd(), 'data/')))
+        harvests = sorted(os.listdir(os.path.join(os.getcwd(), 'data')))
         harvest = harvests[-1]
     return harvest
 
 
 def get_metadata(data_dir):
     try:
-        with open('{}metadata.json'.format(data_dir), 'rb') as meta_file:
+        with open(os.path.join(data_dir, 'metadata.json'), 'rb') as meta_file:
             meta = json.load(meta_file)
     except IOError:
         print 'No harvest!'
@@ -271,7 +283,7 @@ def get_metadata(data_dir):
 def get_results(data_dir):
     results = {}
     try:
-        with open('{}results.csv'.format(data_dir), 'rb') as csv_file:
+        with open(os.path.join(data_dir, 'results.csv'), 'rb') as csv_file:
                 reader = csv.reader(csv_file, delimiter=',')
                 rows = list(reader)
                 results['num_rows'] = len(rows) - 1
@@ -284,7 +296,7 @@ def get_results(data_dir):
 
 def report_harvest(args):
     harvest = get_harvest(args)
-    data_dir = os.path.join(os.getcwd(), 'data/{}/'.format(harvest))
+    data_dir = os.path.join(os.getcwd(), 'data', harvest)
     meta = get_metadata(data_dir)
     if meta:
         results = get_results(data_dir)
@@ -309,18 +321,18 @@ def report_harvest(args):
 
 def restart_harvest(args):
     harvest = get_harvest(args)
-    data_dir = os.path.join(os.getcwd(), 'data/{}/'.format(harvest))
+    data_dir = os.path.join(os.getcwd(), 'data', harvest)
     meta = get_metadata(data_dir)
     if meta:
         try:
-            with open('{}results.csv'.format(data_dir), 'rb') as csv_file:
+            with open(os.path.join(data_dir, 'results.csv'), 'rb') as csv_file:
                 reader = csv.reader(csv_file, delimiter=',')
                 rows = list(reader)
             if len(rows) > 1:
                 start = len(rows) - 2
                 # Remove the last row in the CSV just in case there was a problem
                 rows = rows[:-1]
-                with open('{}results.csv'.format(data_dir), 'wb') as csv_file:
+                with open(os.path.join(data_dir, 'results.csv'), 'wb') as csv_file:
                     writer = csv.writer(csv_file, delimiter=',')
                     for row in rows:
                         writer.writerow(row)
@@ -338,14 +350,14 @@ def prepare_harvest(args):
     elif args.action == 'restart':
         restart_harvest(args)
     else:
-        harvest = int(time.time())
-        data_dir = os.path.join(os.getcwd(), 'data/{}/'.format(harvest))
+        harvest = str(int(time.time()))  # Get rid of fractions
+        data_dir = os.path.join(os.getcwd(), 'data', harvest)
         make_dir(data_dir)
         save_meta(args, data_dir, harvest)
         if args.pdf:
-            make_dir('{}/pdf/'.format(data_dir))
+            make_dir(os.path.join(data_dir, 'pdf'))
         if args.text:
-            make_dir('{}/text/'.format(data_dir))
+            make_dir(os.path.join(data_dir, 'text'))
         start_harvest(data_dir=data_dir, key=args.key, query=args.query, pdf=args.pdf, text=args.text, start=0, max=args.max)
 
 
@@ -363,9 +375,9 @@ def main():
     parser_start.add_argument('query', help='The url of the search you want to harvest')
     parser_start.add_argument('key', help='Your Trove API key')
     parser_restart = subparsers.add_parser('restart', help='Restart an unfinished harvest')
-    parser_restart.add_argument('--harvest', type=int, help='Restart the harvest with this id (default is the most recent harvest)')
+    parser_restart.add_argument('--harvest', help='Restart the harvest with this id (default is the most recent harvest)')
     parser_report = subparsers.add_parser('report', help='Report on a harvest')
-    parser_report.add_argument('--harvest', type=int, help='Report on the harvest with this id (default is the most recent harvest)')
+    parser_report.add_argument('--harvest', help='Report on the harvest with this id (default is the most recent harvest)')
     parser_start.add_argument('--max', type=int, default=0, help='Maximum number of results to return')
     parser_start.add_argument('--pdf', action="store_true", help='Save PDFs of articles')
     parser_start.add_argument('--text', action="store_true", help='Save text contents of articles')

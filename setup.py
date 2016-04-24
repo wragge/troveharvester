@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='troveharvester',
-      version='0.1.0',
+      version='0.1.1',
       packages=['troveharvester'],
       description='Tool for harvesting Trove digitised newspaper articles.',
       author='Tim Sherratt',
