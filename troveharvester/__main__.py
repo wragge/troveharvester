@@ -8,9 +8,9 @@ To the extent possible under law, the author(s) have dedicated all copyright and
 You should have received a copy of the CC0 Public Domain Dedication along with this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 """
 
-import trove
-from harvest import TroveHarvester, ServerError
-import urllib
+from . import trove
+from .harvest import TroveHarvester, ServerError
+# import urllib
 import time
 import csv
 import argparse
@@ -18,12 +18,20 @@ import os
 import datetime
 import json
 from pprint import pprint
-import urlparse
-from urllib2 import urlopen, Request, HTTPError, URLError
-from urllib import urlencode
+# import urlparse
+# from urllib2 import urlopen, Request, HTTPError, URLError
+# from urllib import urlencode
 import re
-from utilities import retry
+from .utilities import retry
 
+try:
+    from urllib.request import urlopen, Request, urlretrieve
+    from urllib.parse import urlparse, parse_qsl, urlencode
+    from urllib.error import HTTPError, URLError
+except ImportError:
+    from urlparse import urlparse, parse_qsl
+    from urllib2 import urlopen, Request, HTTPError, URLError
+    from urllib import urlencode, urlretrieve
 
 FIELDS = [
     'article_id',
@@ -131,18 +139,18 @@ class Harvester(TroveHarvester):
                         pdf_url = self.get_pdf_url(article_id)
                         if pdf_url:
                             pdf_file = os.path.join(self.data_dir, 'pdf', '{}.pdf'.format(article_id))
-                            urllib.urlretrieve(pdf_url, pdf_file)
+                            urlretrieve(pdf_url, pdf_file)
                     if self.text:
                         text = article.get('articleText')
                         if text:
                             text = re.sub('<[^<]+?>', '', text)
                             text = re.sub("\s\s+", " ", text)
-                            text_file = os.path.join(self.data_dir, 'text', '{}.text'.format(article_id))
+                            text_file = os.path.join(self.data_dir, 'text', '{}.txt'.format(article_id))
                             with open(text_file, 'w') as text_output:
                                 text_output.write(text.encode('utf-8'))
             time.sleep(0.5)
             self.harvested += self.get_highest_n(results)
-            print 'Harvested: {}'.format(self.harvested)
+            print('Harvested: {}'.format(self.harvested))
         except KeyError:
             pass
 
@@ -154,11 +162,11 @@ def get_url(url):
         try:
             response = urlopen(req)
         except HTTPError as e:
-            print 'The server couldn\'t fulfill the request.'
-            print 'Error code: ', e.code
+            print('The server couldn\'t fulfill the request.')
+            print('Error code: {}'.format(e.code))
         except URLError as e:
-            print 'We failed to reach a server.'
-            print 'Reason: ', e.reason
+            print('We failed to reach a server.')
+            print('Reason: {}'.format(e.reason))
         return response
 
 
@@ -166,7 +174,7 @@ def get_titles(value, key):
     title_ids = []
     state = STATES[value]
     url = 'http://api.trove.nla.gov.au/newspaper/titles?state={}&encoding=json&key={}'.format(state, key)
-    print url
+    # print(url)
     response = get_url(url)
     if response:
         data = json.load(response)
@@ -186,8 +194,8 @@ def prepare_query(query, text, api_key):
         new_params = {}
         dates = {}
         keywords = []
-        parsed_url = urlparse.urlparse(query)
-        params = urlparse.parse_qsl(parsed_url.query)
+        parsed_url = urlparse(query)
+        params = parse_qsl(parsed_url.query)
         for key, value in params:
             if key in safe:
                 new_params[key] = value
@@ -257,7 +265,7 @@ def save_meta(args, data_dir, harvest):
     meta['text'] = args.text
     meta['harvest'] = harvest
     meta['date_started'] = datetime.datetime.now().isoformat()
-    with open(os.path.join(data_dir, 'metadata.json'), 'wb') as meta_file:
+    with open(os.path.join(data_dir, 'metadata.json'), 'w') as meta_file:
         json.dump(meta, meta_file, indent=4)
 
 
@@ -272,10 +280,10 @@ def get_harvest(args):
 
 def get_metadata(data_dir):
     try:
-        with open(os.path.join(data_dir, 'metadata.json'), 'rb') as meta_file:
+        with open(os.path.join(data_dir, 'metadata.json'), 'r') as meta_file:
             meta = json.load(meta_file)
     except IOError:
-        print 'No harvest!'
+        print('No harvest!')
         meta = None
     return meta
 
@@ -300,22 +308,22 @@ def report_harvest(args):
     meta = get_metadata(data_dir)
     if meta:
         results = get_results(data_dir)
-        print ''
-        print 'HARVEST METADATA'
-        print '================'
-        print 'Last harvest started: {}'.format(meta['date_started'])
-        print 'Harvest id: {}'.format(meta['harvest'])
-        print 'API key: {}'.format(meta['key'])
-        print 'Query: {}'.format(meta['query'])
-        print 'Max results: {}'.format(meta['max'])
-        print 'Include PDFs: {}'.format(meta['pdf'])
-        print 'Include text: {}'.format(meta['text'])
-        print ''
-        print 'HARVEST PROGRESS'
-        print '================'
-        print 'Articles harvested: {}'.format(results['num_rows'])
-        print 'Last article harvested:'
-        print ''
+        print('')
+        print('HARVEST METADATA')
+        print('================')
+        print('Last harvest started: {}'.format(meta['date_started']))
+        print('Harvest id: {}'.format(meta['harvest']))
+        print('API key: {}'.format(meta['key']))
+        print('Query: {}'.format(meta['query']))
+        print('Max results: {}'.format(meta['max']))
+        print('Include PDFs: {}'.format(meta['pdf']))
+        print('Include text: {}'.format(meta['text']))
+        print('')
+        print('HARVEST PROGRESS')
+        print('================')
+        print('Articles harvested: {}'.format(results['num_rows']))
+        print('Last article harvested:')
+        print('')
         pprint(results['last_row'], indent=2)
 
 
@@ -387,4 +395,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+

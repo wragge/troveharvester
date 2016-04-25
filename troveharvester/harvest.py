@@ -1,7 +1,12 @@
 import re
 import json
-from urllib2 import urlopen, Request, HTTPError
-from utilities import retry
+try:
+    from urllib.request import urlopen, Request
+    from urllib.error import HTTPError
+except ImportError:
+    from urllib2 import urlopen, Request, HTTPError
+from .utilities import retry
+import codecs
 
 
 class ServerError(Exception):
@@ -73,10 +78,11 @@ class TroveHarvester:
                 query_url,
                 self.harvested
             )
-            print current_url
+            print(current_url)
             response = self._get_url(current_url)
             try:
-                results = json.load(response)
+                reader = codecs.getreader('utf-8')  # For Python 3
+                results = json.load(reader(response))
             except (AttributeError, ValueError):
                 # Log errors?
                 pass

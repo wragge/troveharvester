@@ -1,4 +1,8 @@
-from urllib2 import Request, urlopen, URLError, HTTPError
+try:
+    from urllib.request import urlopen, Request
+    from urllib.error import HTTPError, URLError
+except ImportError:
+    from urllib2 import urlopen, Request, HTTPError, URLError
 import json
 import re
 import time
@@ -26,9 +30,9 @@ class Trove:
             elif item_type == 'contributor':
                 item = TroveContributor(self.api_key, item_id)
             else:
-                print 'I don\'t recognise that item type!'
+                print('I don\'t recognise that item type!')
         else:
-            print 'I need more item details!'
+            print('I need more item details!')
         return item
 
 
@@ -70,7 +74,7 @@ class TroveItem:
             if 'value' in value:
                 value = value['value']
             else:
-                value = value.values()[0]
+                value = list(value.values())[0]
         try:
             value = str(value.encode('utf8'))
         except AttributeError:
@@ -88,7 +92,7 @@ class TroveItem:
         '''
         Gets a list of the field names or the record.
         '''
-        return self.record.keys()
+        return list(self.record.keys())
 
     def get_record(self):
         '''
@@ -100,7 +104,7 @@ class TroveItem:
         if self.title_field:
             title = self.get_field(self.title_field)[0]
         else:
-            print 'Title field is not set!'
+            print('Title field is not set!')
             title = None
         return title
 
@@ -108,7 +112,7 @@ class TroveItem:
         try:
             value = self.record[field]
         except KeyError:
-            print 'No such field!'
+            print('No such field!')
             value = None
         else:
             value = self._prepare_value(value)
@@ -120,11 +124,11 @@ class TroveItem:
         try:
             response = urlopen(req)
         except HTTPError as e:
-            print 'The server couldn\'t fulfill the request.'
-            print 'Error code: ', e.code
+            print('The server couldn\'t fulfill the request.')
+            print('Error code: {}'.format(e.code))
         except URLError as e:
-            print 'We failed to reach a server.'
-            print 'Reason: ', e.reason
+            print('We failed to reach a server.')
+            print('Reason: {}'.format(e.reason))
         return response
 
 
@@ -192,7 +196,6 @@ class TroveWork(TroveItem):
             records = self._check_if_list(record)
         return records
 
-
     def get_version(self, version_id):
         version = None
         for ver in self._check_if_list(self.record['version']):
@@ -240,9 +243,9 @@ class TroveWork(TroveItem):
                     if ('type' not in identifier) or ('type' in identifier and identifier['type'] == 'url'):
                         try:
                             urls[identifier['linktype']] = identifier['value']
-                        except TypeError: #ignore non-dictionaries
+                        except TypeError:  # ignore non-dictionaries
                             pass
-                except TypeError: #ignore non-dictionaries
+                except TypeError:  # ignore non-dictionaries
                     pass
         if 'identifier.url.mediumresolution' in record:
             urls['mediumresolution'] = record['identifier.url.mediumresolution']
@@ -338,12 +341,12 @@ class TroveWork(TroveItem):
         details = {}
         # Main work fields
         work_fields = [
-            'id', 
-            'title', 
-            'troveUrl', 
-            'contributor', 
-            'issued', 
-            'type', 
+            'id',
+            'title',
+            'troveUrl',
+            'contributor',
+            'issued',
+            'type',
             'isPartOf',
             'language',
             'abstract',
@@ -394,7 +397,7 @@ class TroveList(TroveItem):
     api_url = 'http://api.trove.nla.gov.au/list/{}/?encoding=json&reclevel=full&include=all&key={}'
     item_type = 'list'
     title_field = 'title'
-    list_items = [] 
+    list_items = []
 
     def __init__(self, api_key, item_id):
         self.api_key = api_key
