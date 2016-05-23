@@ -12,6 +12,8 @@ TroveHarvester
 
 This is a tool for harvesting large quantities of digitised newspaper articles from `Trove <http://trove.nla.gov.au>`_.
 
+It has been tested on MacOSX and Windows 7, and should work ok with Python 2.7 and Python 3.
+
 Installation
 ------------
 
@@ -23,6 +25,15 @@ Assuming you have Python and `Virtualenv <https://virtualenv.pypa.io/en/latest/>
     $ cd mytroveharvests
     $ source bin/activate
     $ pip install troveharvester
+
+On Windows it should be:
+
+.. code-block:: bash
+
+    > virtualenv mytroveharvests
+    > cd mytroveharvests
+    > Scripts\activate
+    > pip install troveharvester
 
 Basic usage
 -----------
@@ -45,6 +56,14 @@ To start a new harvest you can just do:
     $ cd mytroveharvests
     $ source bin/activate
     $ troveharvester start "[Trove query]" [Trove API key]
+
+Or on Windows:
+
+.. code-block:: bash
+
+    > cd mytroveharvests
+    > Scripts\activate
+    > troveharvester start "[Trove query]" [Trove API key]
 
 The Trove query can either be a url copy and pasted from a search in the `Trove web interface <http://trove.nla.gov.au/newspaper/>`_, or a Trove API query url constructed using something like the `Trove API Console <https://troveconsole.herokuapp.com/>`_. Enclose the url in double quotes.
 

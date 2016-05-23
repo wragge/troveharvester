@@ -12,7 +12,6 @@ from . import trove
 from .harvest import TroveHarvester, ServerError
 # import urllib
 import time
-import csv
 import argparse
 import os
 import datetime
@@ -23,6 +22,7 @@ from pprint import pprint
 # from urllib import urlencode
 import re
 from .utilities import retry
+import unicodecsv as csv
 
 try:
     from urllib.request import urlopen, Request, urlretrieve
@@ -75,9 +75,9 @@ class Harvester(TroveHarvester):
     def prepare_row(self, article):
         row = {}
         row['article_id'] = article['id']
-        row['title'] = article['heading'].encode('utf-8')
+        row['title'] = article['heading']
         row['newspaper_id'] = article['title']['id']
-        row['newspaper_title'] = article['title']['value'].encode('utf-8')
+        row['newspaper_title'] = article['title']['value']
         row['page'] = article['pageSequence']
         row['date'] = article['date']
         row['category'] = article.get('category')
@@ -86,6 +86,13 @@ class Harvester(TroveHarvester):
         row['corrections'] = article.get('correctionCount')
         row['url'] = article.get('identifier')
         return row
+
+    def make_filename(self, article):
+        date = article['date']
+        date = date.replace('-', '')
+        newspaper_id = article['title']['id']
+        article_id = article['id']
+        return '{}-{}-{}'.format(date, newspaper_id, article_id)
 
     @retry(ServerError, tries=10, delay=1)
     def ping_pdf(self, ping_url):
@@ -97,7 +104,7 @@ class Harvester(TroveHarvester):
             if e.code == 423:
                 ready = False
             else:
-                raise ServerError
+                raise ServerError("The server didn't respond")
         else:
             ready = True
         return ready
@@ -106,7 +113,7 @@ class Harvester(TroveHarvester):
         pdf_url = None
         prep_url = 'http://trove.nla.gov.au/newspaper/rendition/nla.news-article{}/level/{}/prep'.format(article_id, zoom)
         response = get_url(prep_url)
-        prep_id = response.read()
+        prep_id = response.read().decode()
         ping_url = 'http://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.ping?followup={}'.format(article_id, zoom, prep_id)
         tries = 0
         ready = False
@@ -128,7 +135,7 @@ class Harvester(TroveHarvester):
         try:
             articles = results[0]['records']['article']
             with open(self.csv_file, 'ab') as csv_file:
-                writer = csv.DictWriter(csv_file, FIELDS)
+                writer = csv.DictWriter(csv_file, FIELDS, encoding='utf-8')
                 if self.harvested == 0:
                     writer.writeheader()
                 for article in articles:
@@ -138,15 +145,17 @@ class Harvester(TroveHarvester):
                     if self.pdf:
                         pdf_url = self.get_pdf_url(article_id)
                         if pdf_url:
-                            pdf_file = os.path.join(self.data_dir, 'pdf', '{}.pdf'.format(article_id))
+                            pdf_filename = self.make_filename(article)
+                            pdf_file = os.path.join(self.data_dir, 'pdf', '{}.pdf'.format(pdf_filename))
                             urlretrieve(pdf_url, pdf_file)
                     if self.text:
                         text = article.get('articleText')
                         if text:
+                            text_filename = self.make_filename(article)
                             text = re.sub('<[^<]+?>', '', text)
                             text = re.sub("\s\s+", " ", text)
-                            text_file = os.path.join(self.data_dir, 'text', '{}.txt'.format(article_id))
-                            with open(text_file, 'w') as text_output:
+                            text_file = os.path.join(self.data_dir, 'text', '{}.txt'.format(text_filename))
+                            with open(text_file, 'wb') as text_output:
                                 text_output.write(text.encode('utf-8'))
             time.sleep(0.5)
             self.harvested += self.get_highest_n(results)
@@ -219,7 +228,7 @@ def prepare_query(query, text, api_key):
             elif key == 'dateTo':
                 dates['to'] = value[:4]
             elif key == 'exactPhrase':
-                keywords.append['"{}"'.format(value)]
+                keywords.append('"{}"'.format(value))
             elif key == 'notWords':
                 keywords.append('NOT ({})'.format(' OR '.join(value.split())))
             elif key == 'anyWords':
@@ -292,7 +301,7 @@ def get_results(data_dir):
     results = {}
     try:
         with open(os.path.join(data_dir, 'results.csv'), 'rb') as csv_file:
-                reader = csv.reader(csv_file, delimiter=',')
+                reader = csv.reader(csv_file, delimiter=',', encoding='utf-8')
                 rows = list(reader)
                 results['num_rows'] = len(rows) - 1
                 results['last_row'] = rows[-1]
@@ -334,14 +343,14 @@ def restart_harvest(args):
     if meta:
         try:
             with open(os.path.join(data_dir, 'results.csv'), 'rb') as csv_file:
-                reader = csv.reader(csv_file, delimiter=',')
+                reader = csv.reader(csv_file, delimiter=',', encoding='utf-8')
                 rows = list(reader)
             if len(rows) > 1:
                 start = len(rows) - 2
                 # Remove the last row in the CSV just in case there was a problem
                 rows = rows[:-1]
                 with open(os.path.join(data_dir, 'results.csv'), 'wb') as csv_file:
-                    writer = csv.writer(csv_file, delimiter=',')
+                    writer = csv.writer(csv_file, delimiter=',', encoding='utf-8')
                     for row in rows:
                         writer.writerow(row)
             else:
