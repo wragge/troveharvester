@@ -44,7 +44,8 @@ FIELDS = [
     'words',
     'illustrated',
     'corrections',
-    'url'
+    'url',
+    'page_url'
 ]
 
 STATES = {
@@ -85,6 +86,8 @@ class Harvester(TroveHarvester):
         row['illustrated'] = article.get('illustrated')
         row['corrections'] = article.get('correctionCount')
         row['url'] = article.get('identifier')
+        page_id = re.search(r'page\/(\d+)', article['trovePageUrl']).group(1)
+        row['page_url'] = 'http://trove.nla.gov.au/newspaper/page/{}'.format(page_id)
         return row
 
     def make_filename(self, article):
@@ -199,7 +202,7 @@ def prepare_query(query, text, api_key):
             query += '&include=articleText'
         return query
     else:
-        safe = ['q', 'l-category', 'l-title']
+        safe = ['q', 'l-category', 'l-title', 'l-decade', 'l-year', 'l-month']  # Note l-month doesn't work in API -- returns 0 results
         new_params = {}
         dates = {}
         keywords = []
@@ -223,6 +226,8 @@ def prepare_query(query, text, api_key):
                     new_params[key] = 'y'
             elif key == 'l-advcategory':
                 new_params['l-category'] = value
+            elif key == 'l-advtitle':
+                new_params['l-title'] = value
             elif key == 'dateFrom':
                 dates['from'] = value[:4]
             elif key == 'dateTo':
