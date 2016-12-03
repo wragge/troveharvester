@@ -210,7 +210,14 @@ def prepare_query(query, text, api_key):
         params = parse_qsl(parsed_url.query)
         for key, value in params:
             if key in safe:
-                new_params[key] = value
+                if key in new_params:
+                    try:
+                        new_params[key].append(value)
+                    except AttributeError:
+                        old_value = new_params[key]
+                        new_params[key] = [old_value, value]
+                else:
+                    new_params[key] = value
             elif key == 'l-word':
                 if '<100 Words' in value:
                     new_params[key] = '0'
@@ -227,7 +234,14 @@ def prepare_query(query, text, api_key):
             elif key == 'l-advcategory':
                 new_params['l-category'] = value
             elif key == 'l-advtitle':
-                new_params['l-title'] = value
+                if 'l-title' in new_params:
+                    try:
+                        new_params['l-title'].append(value)
+                    except AttributeError:
+                        old_value = new_params['l-title']
+                        new_params['l-title'] = [old_value, value]
+                else:
+                    new_params['l-title'] = value
             elif key == 'dateFrom':
                 dates['from'] = value[:4]
             elif key == 'dateTo':
