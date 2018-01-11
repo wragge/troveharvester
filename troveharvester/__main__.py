@@ -86,8 +86,11 @@ class Harvester(TroveHarvester):
         row['illustrated'] = article.get('illustrated')
         row['corrections'] = article.get('correctionCount')
         row['url'] = article.get('identifier')
-        page_id = re.search(r'page\/(\d+)', article['trovePageUrl']).group(1)
-        row['page_url'] = 'http://trove.nla.gov.au/newspaper/page/{}'.format(page_id)
+        if 'trovePageUrl' in article:
+            page_id = re.search(r'page\/(\d+)', article['trovePageUrl']).group(1)
+            row['page_url'] = 'http://trove.nla.gov.au/newspaper/page/{}'.format(page_id)
+        else:
+            row['page_url'] = None
         return row
 
     def make_filename(self, article):
