@@ -7,15 +7,26 @@
 
     You should have received a copy of the CC0 Public Domain Dedication along with this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 
-TroveHarvester 
+TroveHarvester
 ==============
 
 This is a tool for harvesting large quantities of digitised newspaper articles from `Trove <http://trove.nla.gov.au>`_.
 
 It has been tested on MacOSX and Windows 7, and should work ok with Python 2.7 and Python 3.
 
-Installation
-------------
+Installation via Docker
+-----------------------
+
+Assuming you have Docker installed and running, just spin up a troveharvester container:
+
+.. code-block:: bash
+
+    $ docker run -v $(pwd):/troveharvester/data -it wragge/troveharvester /bin/bash
+
+Note that this will store the harvested data in the current working directory on your local filesystem.
+
+Installation via pip
+--------------------
 
 Assuming you have Python and `Virtualenv <https://virtualenv.pypa.io/en/latest/>`_ installed just:
 
@@ -109,5 +120,3 @@ By default the script will report on the most recent harvest. You can get a summ
 .. code-block:: bash
 
     $ troveharvester report --harvest [harvest timestamp]
-
-

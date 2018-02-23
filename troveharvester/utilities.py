@@ -30,7 +30,7 @@ def retry(ExceptionToCheck, tries=4, delay=3, backoff=2, logger=None):
                     try_one_last_time = False
                     break
                 except ExceptionToCheck as e:
-                    msg = "%s. Retrying in %d seconds..." % (str(e), mdelay)
+                    msg = "%s Retrying in %d seconds..." % (str(e), mdelay)
                     if logger:
                         logger.warning(msg)
                     else:

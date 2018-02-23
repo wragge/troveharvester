@@ -1,12 +1,9 @@
 import re
 import json
-try:
-    from urllib.request import urlopen, Request
-    from urllib.error import HTTPError
-except ImportError:
-    from urllib2 import urlopen, Request, HTTPError
 from .utilities import retry
 import codecs
+import requests
+from requests.exceptions import ConnectionError, HTTPError, RequestException, Timeout
 
 
 class ServerError(Exception):
@@ -55,16 +52,16 @@ class TroveHarvester:
     @retry(ServerError, tries=10, delay=1)
     def _get_url(self, url):
         ''' Try to retrieve the supplied url.'''
-        req = Request(url)
         try:
-            response = urlopen(req)
-        except HTTPError as e:
-            if e.code == 503 or e.code == 504 or e.code == 500:
-                raise ServerError("The server didn't respond")
-            else:
-                raise
-        else:
-            return response
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+        except HTTPError:
+            raise ServerError('The server couldn\'t fulfill the request. Error code: {}.'.format(response.status_code))
+        except ConnectionError:
+            raise ServerError('We failed to reach a server.')
+        except Timeout:
+            raise ServerError('The server took too long to respond.')
+        return response
 
     def harvest(self):
         number = self.number
@@ -81,8 +78,9 @@ class TroveHarvester:
             print(current_url)
             response = self._get_url(current_url)
             try:
-                reader = codecs.getreader('utf-8')  # For Python 3
-                results = json.load(reader(response))
+                # reader = codecs.getreader('utf-8')  # For Python 3
+                # results = json.load(reader(response))
+                results = response.json()
             except (AttributeError, ValueError):
                 # Log errors?
                 pass

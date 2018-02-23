@@ -10,28 +10,23 @@ You should have received a copy of the CC0 Public Domain Dedication along with t
 
 from . import trove
 from .harvest import TroveHarvester, ServerError
-# import urllib
 import time
 import argparse
 import os
 import datetime
 import json
 from pprint import pprint
-# import urlparse
-# from urllib2 import urlopen, Request, HTTPError, URLError
-# from urllib import urlencode
 import re
 from .utilities import retry
 import unicodecsv as csv
+import requests
+from requests.exceptions import ConnectionError, HTTPError, RequestException, Timeout
 
 try:
-    from urllib.request import urlopen, Request, urlretrieve
     from urllib.parse import urlparse, parse_qsl, urlencode
-    from urllib.error import HTTPError, URLError
 except ImportError:
     from urlparse import urlparse, parse_qsl
-    from urllib2 import urlopen, Request, HTTPError, URLError
-    from urllib import urlencode, urlretrieve
+    from urllib import urlencode
 
 FIELDS = [
     'article_id',
@@ -100,17 +95,23 @@ class Harvester(TroveHarvester):
         article_id = article['id']
         return '{}-{}-{}'.format(date, newspaper_id, article_id)
 
-    @retry(ServerError, tries=10, delay=1)
+    @retry((HTTPError, ConnectionError, Timeout), tries=10, delay=1)
     def ping_pdf(self, ping_url):
         ready = False
-        req = Request(ping_url)
+        # req = Request(ping_url)
         try:
-            urlopen(req)
-        except HTTPError as e:
-            if e.code == 423:
+            # urlopen(req)
+            response = requests.get(ping_url, timeout=30)
+            response.raise_for_status()
+        except HTTPError:
+            if response.status_code == 423:
                 ready = False
             else:
-                raise ServerError("The server didn't respond")
+                raise HTTPError('The server couldn\'t fulfill the request.\nError code: {}'.format(response.status_code))
+        except ConnectionError:
+            print('We failed to reach a server.')
+        except Timeout:
+            print('The server took too long to respond.')
         else:
             ready = True
         return ready
@@ -119,7 +120,7 @@ class Harvester(TroveHarvester):
         pdf_url = None
         prep_url = 'http://trove.nla.gov.au/newspaper/rendition/nla.news-article{}/level/{}/prep'.format(article_id, zoom)
         response = get_url(prep_url)
-        prep_id = response.read().decode()
+        prep_id = response.text
         ping_url = 'http://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.ping?followup={}'.format(article_id, zoom, prep_id)
         tries = 0
         ready = False
@@ -153,7 +154,10 @@ class Harvester(TroveHarvester):
                         if pdf_url:
                             pdf_filename = self.make_filename(article)
                             pdf_file = os.path.join(self.data_dir, 'pdf', '{}.pdf'.format(pdf_filename))
-                            urlretrieve(pdf_url, pdf_file)
+                            response = get_url(pdf_url, stream=True)
+                            with open(pdf_file, 'wb') as pf:
+                                for chunk in response.iter_content(chunk_size=128):
+                                    pf.write(chunk)
                     if self.text:
                         text = article.get('articleText')
                         if text:
@@ -170,19 +174,19 @@ class Harvester(TroveHarvester):
             pass
 
 
-@retry((HTTPError, URLError), tries=10, delay=1)
-def get_url(url):
-        response = None
-        req = Request(url)
-        try:
-            response = urlopen(req)
-        except HTTPError as e:
-            print('The server couldn\'t fulfill the request.')
-            print('Error code: {}'.format(e.code))
-        except URLError as e:
-            print('We failed to reach a server.')
-            print('Reason: {}'.format(e.reason))
-        return response
+@retry(ServerError, tries=10, delay=1)
+def get_url(url, stream=False):
+    response = None
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+    except HTTPError:
+        raise ServerError('The server couldn\'t fulfill the request. Error code: {}.'.format(response.status_code))
+    except ConnectionError:
+        raise ServerError('We failed to reach a server.')
+    except Timeout:
+        raise ServerError('The server took too long to respond.')
+    return response
 
 
 def get_titles(value, key):
@@ -192,7 +196,7 @@ def get_titles(value, key):
     # print(url)
     response = get_url(url)
     if response:
-        data = json.load(response)
+        data = response.json()
         titles = data['response']['records']['newspaper']
         for title in titles:
             title_ids.append(title['id'])
@@ -426,4 +430,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
