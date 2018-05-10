@@ -71,7 +71,11 @@ class Harvester(TroveHarvester):
     def prepare_row(self, article):
         row = {}
         row['article_id'] = article['id']
-        row['title'] = article['heading']
+        # Seems some articles don't have headings -- added 10 May 2018
+        try:
+            row['title'] = article['heading']
+        except KeyError:
+            row['title'] = ''
         row['newspaper_id'] = article['title']['id']
         row['newspaper_title'] = article['title']['value']
         row['page'] = article['pageSequence']
@@ -171,7 +175,7 @@ class Harvester(TroveHarvester):
             self.harvested += self.get_highest_n(results)
             print('Harvested: {}'.format(self.harvested))
         except KeyError:
-            pass
+            raise
 
 
 @retry(ServerError, tries=10, delay=1)
