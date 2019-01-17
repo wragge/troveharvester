@@ -94,18 +94,12 @@ class TroveHarvester:
                 # print(current_url)
                 response = self._get_url(current_url)
                 try:
-                    # reader = codecs.getreader('utf-8')  # For Python 3
-                    # results = json.load(reader(response))
                     results = response.json()
                 except (AttributeError, ValueError):
                     # Log errors?
                     pass
                 else:
                     records = results['response']['zone'][0]['records']
-                    try:
-                        self.next_start = records['nextStart']
-                    except KeyError:
-                        self.next_start = None
                     self.process_results(records)
                     pbar.update(int(records['n']))
 

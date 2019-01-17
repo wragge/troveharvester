@@ -15,6 +15,7 @@ import argparse
 import os
 import datetime
 import arrow
+from tqdm import tqdm
 import json
 from pprint import pprint
 import re
@@ -57,17 +58,94 @@ STATES = {
 }
 
 
-class Harvester(TroveHarvester):
+class Harvester:
     zoom = 3
     pdf = False
     text = False
+    query = None
+    harvested = 0
+    number = 20
+    maximum = 0
+    next_start = '*'
+    api_url = 'https://api.trove.nla.gov.au/v2/result'
 
-    def __init__(self, trove_api, **kwargs):
+    def __init__(self, **kwargs):
         self.data_dir = kwargs.get('data_dir')
         self.csv_file = os.path.join(self.data_dir, 'results.csv')
         self.pdf = kwargs.get('pdf')
         self.text = kwargs.get('text')
-        TroveHarvester.__init__(self, trove_api, **kwargs)
+        self.api_key = kwargs.get('key')
+        self.query_params = kwargs.get('query_params', None)
+        self.harvested = int(kwargs.get('harvested', 0))
+        self.number = int(kwargs.get('number', 100))
+        #self.next_start = kwargs.get('next_start')
+        max_results = kwargs.get('max')
+        if max_results:
+            self.maximum = max_results
+        else:
+            self._get_total()
+
+    def _get_total(self):
+        params = self.query_params.copy()
+        params['n'] = 0
+        response = self._get_url(self.api_url, params)
+        try:
+            results = response.json()
+        except (AttributeError, ValueError):
+            print('No results!')
+        else:
+            self.maximum = int(results['response']['zone'][0]['records']['total'])
+
+    def _clean_query(self, query):
+        """Remove s and n values just in case."""
+        query = re.sub(r'&s=\d+', '', query)
+        query = re.sub(r'&n=\d+', '', query)
+        return query
+
+    def log_query(self):
+        """Do something with details of query -- ie log date"""
+        pass
+
+    @retry(ServerError, tries=10, delay=1)
+    def _get_url(self, url, params=None):
+        ''' Try to retrieve the supplied url.'''
+        try:
+            response = requests.get(url, params=params, timeout=30)
+            print(response.url)
+            response.raise_for_status()
+        except HTTPError:
+            raise ServerError('The server couldn\'t fulfill the request. Error code: {}.'.format(response.status_code))
+        except ConnectionError:
+            raise ServerError('We failed to reach a server.')
+        except Timeout:
+            raise ServerError('The server took too long to respond.')
+        return response
+
+    def harvest(self):
+        number = self.number
+        query_params = self.query_params.copy()
+        query_params['n'] = self.number
+        with tqdm(total=self.maximum) as pbar:
+            while self.next_start and (self.harvested < self.maximum):
+                query_params['s'] = self.next_start
+                # print(current_url)
+                response = self._get_url(self.api_url, query_params)
+                try:
+                    results = response.json()
+                except (AttributeError, ValueError):
+                    # Log errors?
+                    pass
+                else:
+                    records = results['response']['zone'][0]['records']
+                    self.process_results(records)
+                    pbar.update(int(records['n']))
+
+    def update_meta(self, next_start):
+        meta = get_metadata(self.data_dir)
+        if meta:
+            meta['next_start'] = next_start
+        with open(os.path.join(self.data_dir, 'metadata.json'), 'w') as meta_file:
+            json.dump(meta, meta_file, indent=4)
 
     def prepare_row(self, article):
         row = {}
@@ -123,10 +201,10 @@ class Harvester(TroveHarvester):
 
     def get_pdf_url(self, article_id, zoom=3):
         pdf_url = None
-        prep_url = 'http://trove.nla.gov.au/newspaper/rendition/nla.news-article{}/level/{}/prep'.format(article_id, zoom)
+        prep_url = 'https://trove.nla.gov.au/newspaper/rendition/nla.news-article{}/level/{}/prep'.format(article_id, zoom)
         response = get_url(prep_url)
         prep_id = response.text
-        ping_url = 'http://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.ping?followup={}'.format(article_id, zoom, prep_id)
+        ping_url = 'https://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.ping?followup={}'.format(article_id, zoom, prep_id)
         tries = 0
         ready = False
         time.sleep(2)  # Give some time to generate pdf
@@ -136,7 +214,7 @@ class Harvester(TroveHarvester):
                 tries += 1
                 time.sleep(5)
         if ready:
-            pdf_url = 'http://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.pdf?followup={}'.format(article_id, zoom, prep_id)
+            pdf_url = 'https://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.pdf?followup={}'.format(article_id, zoom, prep_id)
         return pdf_url
 
     def process_results(self, records):
@@ -174,6 +252,11 @@ class Harvester(TroveHarvester):
                                 text_output.write(text.encode('utf-8'))
             time.sleep(0.5)
             self.harvested += int(records['n'])
+            try:
+                self.next_start = records['nextStart']
+            except KeyError:
+                self.next_start = None
+            self.update_meta(self.next_start)
             # print('Harvested: {}'.format(self.harvested))
         except KeyError:
             raise
@@ -192,20 +275,6 @@ def get_url(url, stream=False):
     except Timeout:
         raise ServerError('The server took too long to respond.')
     return response
-
-
-def get_titles(value, key):
-    title_ids = []
-    state = STATES[value]
-    url = 'http://api.trove.nla.gov.au/newspaper/v2/titles?state={}&encoding=json&key={}'.format(state, key)
-    # print(url)
-    response = get_url(url)
-    if response:
-        data = response.json()
-        titles = data['response']['records']['newspaper']
-        for title in titles:
-            title_ids.append(title['id'])
-    return title_ids
 
 
 def format_date(date, start=False):
@@ -247,7 +316,14 @@ def prepare_query(query, text, api_key):
                 elif '1000+ Words' in value:
                     new_params[key] = '3'
             elif key == 'l-advstate':
-                new_params['l-state'] = value
+                if 'l-state' in new_params:
+                    try:
+                        new_params['l-state'].append(value)
+                    except AttributeError:
+                        old_value = new_params['l-state']
+                        new_params['l-state'] = [old_value, value]
+                else:
+                    new_params['l-state'] = value
             elif key == 'l-illustrated':
                 if value == 'true':
                     new_params[key] = 'y'
@@ -289,12 +365,14 @@ def prepare_query(query, text, api_key):
                 new_params['q'] = date_query
         if 'q' not in new_params:
             new_params['q'] = ' '
+        new_params['key'] = api_key
         new_params['encoding'] = 'json'
         new_params['zone'] = 'newspaper'
         new_params['reclevel'] = 'full'
         if text:
             new_params['include'] = 'articleText'
-        return '{}?{}'.format('http://api.trove.nla.gov.au/v2/result', urlencode(new_params, doseq=True))
+        # return '{}?{}'.format('https://api.trove.nla.gov.au/v2/result', urlencode(new_params, doseq=True))
+        return new_params
 
 
 def make_dir(dir):
@@ -314,6 +392,7 @@ def save_meta(args, data_dir, harvest):
     meta['text'] = args.text
     meta['harvest'] = harvest
     meta['date_started'] = datetime.datetime.now().isoformat()
+    meta['next_start'] = '*'
     with open(os.path.join(data_dir, 'metadata.json'), 'w') as meta_file:
         json.dump(meta, meta_file, indent=4)
 
@@ -381,24 +460,10 @@ def restart_harvest(args):
     data_dir = os.path.join(os.getcwd(), 'data', harvest)
     meta = get_metadata(data_dir)
     if meta:
-        try:
-            with open(os.path.join(data_dir, 'results.csv'), 'rb') as csv_file:
-                reader = csv.reader(csv_file, delimiter=',', encoding='utf-8')
-                rows = list(reader)
-            if len(rows) > 1:
-                start = len(rows) - 2
-                # Remove the last row in the CSV just in case there was a problem
-                rows = rows[:-1]
-                with open(os.path.join(data_dir, 'results.csv'), 'wb') as csv_file:
-                    writer = csv.writer(csv_file, delimiter=',', encoding='utf-8')
-                    for row in rows:
-                        writer.writerow(row)
-            else:
-                start = 0
-        except IOError:
-            # Nothing's been harvested
-            start = 0
-        start_harvest(data_dir=data_dir, key=meta['key'], query=meta['query'], pdf=meta['pdf'], text=meta['text'], start=start, max=meta['max'])
+        if meta['next_start']:
+            start_harvest(data_dir=data_dir, key=meta['key'], query=meta['query'], pdf=meta['pdf'], text=meta['text'], start=meta['next_start'], max=meta['max'])
+        else:
+            print('Harvest completed')
 
 
 def prepare_harvest(args):
@@ -419,9 +484,8 @@ def prepare_harvest(args):
 
 
 def start_harvest(data_dir, key, query, pdf, text, start, max):
-    api_query = prepare_query(query, text, key)
-    trove_api = trove.Trove(key)
-    harvester = Harvester(trove_api, query=api_query, data_dir=data_dir, pdf=pdf, text=text, start=start, max=max)
+    params = prepare_query(query, text, key)
+    harvester = Harvester(query_params=params, data_dir=data_dir, pdf=pdf, text=text, start=start, max=max)
     harvester.harvest()
 
 
