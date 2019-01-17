@@ -136,7 +136,7 @@ class TroveArticle(TroveItem):
     '''
     Newspaper articles
     '''
-    api_url = 'http://api.trove.nla.gov.au/newspaper/{}?reclevel=full&include=articletext&encoding=json&key={}'
+    api_url = 'http://api.trove.nla.gov.au/v2/newspaper/{}?reclevel=full&include=articletext&encoding=json&key={}'
     item_type = 'article'
     title_field = 'heading'
 

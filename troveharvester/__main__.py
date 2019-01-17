@@ -14,6 +14,7 @@ import time
 import argparse
 import os
 import datetime
+import arrow
 import json
 from pprint import pprint
 import re
@@ -138,13 +139,13 @@ class Harvester(TroveHarvester):
             pdf_url = 'http://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.pdf?followup={}'.format(article_id, zoom, prep_id)
         return pdf_url
 
-    def process_results(self, results):
+    def process_results(self, records):
         '''
         Processes a page full of results.
         Saves pdf for each result.
         '''
         try:
-            articles = results[0]['records']['article']
+            articles = records['article']
             with open(self.csv_file, 'ab') as csv_file:
                 writer = csv.DictWriter(csv_file, FIELDS, encoding='utf-8')
                 if self.harvested == 0:
@@ -172,8 +173,8 @@ class Harvester(TroveHarvester):
                             with open(text_file, 'wb') as text_output:
                                 text_output.write(text.encode('utf-8'))
             time.sleep(0.5)
-            self.harvested += self.get_highest_n(results)
-            print('Harvested: {}'.format(self.harvested))
+            self.harvested += int(records['n'])
+            # print('Harvested: {}'.format(self.harvested))
         except KeyError:
             raise
 
@@ -196,7 +197,7 @@ def get_url(url, stream=False):
 def get_titles(value, key):
     title_ids = []
     state = STATES[value]
-    url = 'http://api.trove.nla.gov.au/newspaper/titles?state={}&encoding=json&key={}'.format(state, key)
+    url = 'http://api.trove.nla.gov.au/newspaper/v2/titles?state={}&encoding=json&key={}'.format(state, key)
     # print(url)
     response = get_url(url)
     if response:
@@ -207,13 +208,22 @@ def get_titles(value, key):
     return title_ids
 
 
+def format_date(date, start=False):
+    if date != '*':
+        date_obj = arrow.get(date)
+        if start:
+            date_obj = date_obj.shift(days=-1)
+        date = '{}Z'.format(date_obj.format('YYYY-MM-DDT00:00:00'))
+    return date
+
+
 def prepare_query(query, text, api_key):
     if 'api.trove.nla.gov.au' in query:
         if text and 'articleText' not in query:
             query += '&include=articleText'
         return query
     else:
-        safe = ['q', 'l-category', 'l-title', 'l-decade', 'l-year', 'l-month']  # Note l-month doesn't work in API -- returns 0 results
+        safe = ['q', 'l-category', 'l-title', 'l-decade', 'l-year', 'l-month', 'l-state']  # Note l-month doesn't work in API -- returns 0 results
         new_params = {}
         dates = {}
         keywords = []
@@ -236,9 +246,8 @@ def prepare_query(query, text, api_key):
                     new_params[key] = '1'
                 elif '1000+ Words' in value:
                     new_params[key] = '3'
-            elif key in ['l-state', 'l-advstate']:
-                title_ids = get_titles(value, api_key)
-                new_params['l-title'] = title_ids
+            elif key == 'l-advstate':
+                new_params['l-state'] = value
             elif key == 'l-illustrated':
                 if value == 'true':
                     new_params[key] = 'y'
@@ -254,9 +263,9 @@ def prepare_query(query, text, api_key):
                 else:
                     new_params['l-title'] = value
             elif key == 'dateFrom':
-                dates['from'] = value[:4]
+                dates['from'] = value
             elif key == 'dateTo':
-                dates['to'] = value[:4]
+                dates['to'] = value
             elif key == 'exactPhrase':
                 keywords.append('"{}"'.format(value))
             elif key == 'notWords':
@@ -273,10 +282,11 @@ def prepare_query(query, text, api_key):
                 dates['from'] = '*'
             if 'to' not in dates:
                 dates['to'] = '*'
+            date_query = 'date:[{} TO {}]'.format(format_date(dates['from'], True), format_date(dates['to']))
             if 'q' in new_params:
-                new_params['q'] += ' date:[{} TO {}]'.format(dates['from'], dates['to'])
+                new_params['q'] += ' {}'.format(date_query)
             else:
-                new_params['q'] = 'date:[{} TO {}]'.format(dates['from'], dates['to'])
+                new_params['q'] = date_query
         if 'q' not in new_params:
             new_params['q'] = ' '
         new_params['encoding'] = 'json'
@@ -284,7 +294,7 @@ def prepare_query(query, text, api_key):
         new_params['reclevel'] = 'full'
         if text:
             new_params['include'] = 'articleText'
-        return '{}?{}'.format('http://api.trove.nla.gov.au/result', urlencode(new_params, doseq=True))
+        return '{}?{}'.format('http://api.trove.nla.gov.au/v2/result', urlencode(new_params, doseq=True))
 
 
 def make_dir(dir):

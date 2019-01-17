@@ -3,6 +3,7 @@ import json
 from .utilities import retry
 import codecs
 import requests
+from tqdm import tqdm
 from requests.exceptions import ConnectionError, HTTPError, RequestException, Timeout
 
 
@@ -23,21 +24,35 @@ class TroveHarvester:
     harvested = 0
     number = 20
     maximum = 0
+    next_start = '*'
 
     def __init__(self, trove_api, **kwargs):
         self.trove_api = trove_api
         query = kwargs.get('query', None)
         if query:
             self.query = self._clean_query(query)
-        self.harvested = int(kwargs.get('start', 0))
-        self.number = int(kwargs.get('number', 20))
-        maximum = kwargs.get('max')
-        if maximum:
-            self.maximum = int(maximum)
-            self.max_set = True
+        self.harvested = int(kwargs.get('harvested', 0))
+        self.number = int(kwargs.get('number', 100))
+        #self.next_start = kwargs.get('next_start')
+        max_results = kwargs.get('max')
+        if max_results:
+            self.maximum = max_results
         else:
-            self.maximum = self.harvested + 1
-            self.max_set = False
+            self._get_total()
+
+    def _get_total(self):
+        query_url = '{}&n={}&key={}'.format(
+            self.query,
+            0,
+            self.trove_api.api_key
+        )
+        response = self._get_url(query_url)
+        try:
+            results = response.json()
+        except (AttributeError, ValueError):
+            print('No results!')
+        else:
+            self.maximum = int(results['response']['zone'][0]['records']['total'])
 
     def _clean_query(self, query):
         """Remove s and n values just in case."""
@@ -70,42 +85,29 @@ class TroveHarvester:
             self.number,
             self.trove_api.api_key
         )
-        while (number == self.number) and (self.harvested < self.maximum):
-            current_url = '{}&s={}'.format(
-                query_url,
-                self.harvested
-            )
-            print(current_url)
-            response = self._get_url(current_url)
-            try:
-                # reader = codecs.getreader('utf-8')  # For Python 3
-                # results = json.load(reader(response))
-                results = response.json()
-            except (AttributeError, ValueError):
-                # Log errors?
-                pass
-            else:
-                zones = results['response']['zone']
-                self.process_results(zones)
-                number = self.get_highest_n(zones)
-                if not self.max_set:
-                    self.maximum = self.get_highest_total(zones)
-
-    def get_highest_n(self, zones):
-        n = 0
-        for zone in zones:
-            new_n = int(zone['records']['n'])
-            if new_n > n:
-                n = new_n
-        return n
-
-    def get_highest_total(self, zones):
-        total = 0
-        for zone in zones:
-            new_total = int(zone['records']['total'])
-            if new_total > total:
-                total = new_total
-        return total
+        with tqdm(total=self.maximum) as pbar:
+            while self.next_start and (self.harvested < self.maximum):
+                current_url = '{}&s={}'.format(
+                    query_url,
+                    self.next_start
+                )
+                # print(current_url)
+                response = self._get_url(current_url)
+                try:
+                    # reader = codecs.getreader('utf-8')  # For Python 3
+                    # results = json.load(reader(response))
+                    results = response.json()
+                except (AttributeError, ValueError):
+                    # Log errors?
+                    pass
+                else:
+                    records = results['response']['zone'][0]['records']
+                    try:
+                        self.next_start = records['nextStart']
+                    except KeyError:
+                        self.next_start = None
+                    self.process_results(records)
+                    pbar.update(int(records['n']))
 
     def process_results(self, results):
         """
