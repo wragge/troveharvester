@@ -8,8 +8,6 @@ To the extent possible under law, the author(s) have dedicated all copyright and
 You should have received a copy of the CC0 Public Domain Dedication along with this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
 """
 
-from . import trove
-from .harvest import TroveHarvester, ServerError
 import time
 import argparse
 import os
@@ -19,16 +17,19 @@ from tqdm import tqdm
 import json
 from pprint import pprint
 import re
-from .utilities import retry
 import unicodecsv as csv
 import requests
-from requests.exceptions import ConnectionError, HTTPError, RequestException, Timeout
-
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 try:
-    from urllib.parse import urlparse, parse_qsl, urlencode
+    from urllib.parse import urlparse, parse_qsl
 except ImportError:
     from urlparse import urlparse, parse_qsl
-    from urllib import urlencode
+
+s = requests.Session()
+retries = Retry(total=5, backoff_factor=1, status_forcelist=[ 500, 502, 503, 504 ])
+s.mount('http://', HTTPAdapter(max_retries=retries))
+s.mount('https://', HTTPAdapter(max_retries=retries))
 
 FIELDS = [
     'article_id',
@@ -45,40 +46,21 @@ FIELDS = [
     'page_url'
 ]
 
-STATES = {
-    'Victoria': 'vic',
-    'New South Wales': 'nsw',
-    'South Australia': 'sa',
-    'Queensland': 'qld',
-    'Tasmania': 'tas',
-    'Western Australia': 'wa',
-    'ACT': 'act',
-    'Northern Territory': 'nt',
-    'National': 'national'
-}
-
 
 class Harvester:
     zoom = 3
-    pdf = False
-    text = False
-    query = None
-    harvested = 0
-    number = 20
-    maximum = 0
-    next_start = '*'
     api_url = 'https://api.trove.nla.gov.au/v2/result'
 
     def __init__(self, **kwargs):
         self.data_dir = kwargs.get('data_dir')
         self.csv_file = os.path.join(self.data_dir, 'results.csv')
-        self.pdf = kwargs.get('pdf')
-        self.text = kwargs.get('text')
+        self.pdf = kwargs.get('pdf', False)
+        self.text = kwargs.get('text', False)
         self.api_key = kwargs.get('key')
         self.query_params = kwargs.get('query_params', None)
         self.harvested = int(kwargs.get('harvested', 0))
         self.number = int(kwargs.get('number', 100))
-        #self.next_start = kwargs.get('next_start')
+        self.start = kwargs.get('start', '*')
         max_results = kwargs.get('max')
         if max_results:
             self.maximum = max_results
@@ -88,7 +70,7 @@ class Harvester:
     def _get_total(self):
         params = self.query_params.copy()
         params['n'] = 0
-        response = self._get_url(self.api_url, params)
+        response = s.get(self.api_url, params=params)
         try:
             results = response.json()
         except (AttributeError, ValueError):
@@ -96,40 +78,19 @@ class Harvester:
         else:
             self.maximum = int(results['response']['zone'][0]['records']['total'])
 
-    def _clean_query(self, query):
-        """Remove s and n values just in case."""
-        query = re.sub(r'&s=\d+', '', query)
-        query = re.sub(r'&n=\d+', '', query)
-        return query
-
     def log_query(self):
         """Do something with details of query -- ie log date"""
         pass
 
-    @retry(ServerError, tries=10, delay=1)
-    def _get_url(self, url, params=None):
-        ''' Try to retrieve the supplied url.'''
-        try:
-            response = requests.get(url, params=params, timeout=30)
-            print(response.url)
-            response.raise_for_status()
-        except HTTPError:
-            raise ServerError('The server couldn\'t fulfill the request. Error code: {}.'.format(response.status_code))
-        except ConnectionError:
-            raise ServerError('We failed to reach a server.')
-        except Timeout:
-            raise ServerError('The server took too long to respond.')
-        return response
-
     def harvest(self):
         number = self.number
-        query_params = self.query_params.copy()
-        query_params['n'] = self.number
-        with tqdm(total=self.maximum) as pbar:
-            while self.next_start and (self.harvested < self.maximum):
-                query_params['s'] = self.next_start
+        params = self.query_params.copy()
+        params['n'] = self.number
+        with tqdm(total=self.maximum, unit='article') as pbar:
+            while self.start and (self.harvested < self.maximum):
+                params['s'] = self.start
                 # print(current_url)
-                response = self._get_url(self.api_url, query_params)
+                response = s.get(self.api_url, params=params)
                 try:
                     results = response.json()
                 except (AttributeError, ValueError):
@@ -137,13 +98,12 @@ class Harvester:
                     pass
                 else:
                     records = results['response']['zone'][0]['records']
-                    self.process_results(records)
-                    pbar.update(int(records['n']))
+                    self.process_results(records, pbar)
 
-    def update_meta(self, next_start):
+    def update_meta(self, start):
         meta = get_metadata(self.data_dir)
         if meta:
-            meta['next_start'] = next_start
+            meta['start'] = start
         with open(os.path.join(self.data_dir, 'metadata.json'), 'w') as meta_file:
             json.dump(meta, meta_file, indent=4)
 
@@ -178,23 +138,18 @@ class Harvester:
         article_id = article['id']
         return '{}-{}-{}'.format(date, newspaper_id, article_id)
 
-    @retry((HTTPError, ConnectionError, Timeout), tries=10, delay=1)
     def ping_pdf(self, ping_url):
         ready = False
         # req = Request(ping_url)
         try:
             # urlopen(req)
-            response = requests.get(ping_url, timeout=30)
+            response = s.get(ping_url, timeout=30)
             response.raise_for_status()
         except HTTPError:
             if response.status_code == 423:
                 ready = False
             else:
-                raise HTTPError('The server couldn\'t fulfill the request.\nError code: {}'.format(response.status_code))
-        except ConnectionError:
-            print('We failed to reach a server.')
-        except Timeout:
-            print('The server took too long to respond.')
+                raise
         else:
             ready = True
         return ready
@@ -202,7 +157,7 @@ class Harvester:
     def get_pdf_url(self, article_id, zoom=3):
         pdf_url = None
         prep_url = 'https://trove.nla.gov.au/newspaper/rendition/nla.news-article{}/level/{}/prep'.format(article_id, zoom)
-        response = get_url(prep_url)
+        response = s.get(prep_url)
         prep_id = response.text
         ping_url = 'https://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.ping?followup={}'.format(article_id, zoom, prep_id)
         tries = 0
@@ -217,7 +172,7 @@ class Harvester:
             pdf_url = 'https://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.pdf?followup={}'.format(article_id, zoom, prep_id)
         return pdf_url
 
-    def process_results(self, records):
+    def process_results(self, records, pbar):
         '''
         Processes a page full of results.
         Saves pdf for each result.
@@ -237,7 +192,7 @@ class Harvester:
                         if pdf_url:
                             pdf_filename = self.make_filename(article)
                             pdf_file = os.path.join(self.data_dir, 'pdf', '{}.pdf'.format(pdf_filename))
-                            response = get_url(pdf_url, stream=True)
+                            response = s.get(pdf_url, stream=True)
                             with open(pdf_file, 'wb') as pf:
                                 for chunk in response.iter_content(chunk_size=128):
                                     pf.write(chunk)
@@ -250,31 +205,17 @@ class Harvester:
                             text_file = os.path.join(self.data_dir, 'text', '{}.txt'.format(text_filename))
                             with open(text_file, 'wb') as text_output:
                                 text_output.write(text.encode('utf-8'))
+                    pbar.update(1)
             time.sleep(0.5)
             self.harvested += int(records['n'])
             try:
-                self.next_start = records['nextStart']
+                self.start = records['nextStart']
             except KeyError:
-                self.next_start = None
-            self.update_meta(self.next_start)
+                self.start = None
+            self.update_meta(self.start)
             # print('Harvested: {}'.format(self.harvested))
         except KeyError:
             raise
-
-
-@retry(ServerError, tries=10, delay=1)
-def get_url(url, stream=False):
-    response = None
-    try:
-        response = requests.get(url, timeout=30)
-        response.raise_for_status()
-    except HTTPError:
-        raise ServerError('The server couldn\'t fulfill the request. Error code: {}.'.format(response.status_code))
-    except ConnectionError:
-        raise ServerError('We failed to reach a server.')
-    except Timeout:
-        raise ServerError('The server took too long to respond.')
-    return response
 
 
 def format_date(date, start=False):
@@ -392,7 +333,7 @@ def save_meta(args, data_dir, harvest):
     meta['text'] = args.text
     meta['harvest'] = harvest
     meta['date_started'] = datetime.datetime.now().isoformat()
-    meta['next_start'] = '*'
+    meta['start'] = '*'
     with open(os.path.join(data_dir, 'metadata.json'), 'w') as meta_file:
         json.dump(meta, meta_file, indent=4)
 
@@ -461,7 +402,7 @@ def restart_harvest(args):
     meta = get_metadata(data_dir)
     if meta:
         if meta['next_start']:
-            start_harvest(data_dir=data_dir, key=meta['key'], query=meta['query'], pdf=meta['pdf'], text=meta['text'], start=meta['next_start'], max=meta['max'])
+            start_harvest(data_dir=data_dir, key=meta['key'], query=meta['query'], pdf=meta['pdf'], text=meta['text'], start=meta['start'], max=meta['max'])
         else:
             print('Harvest completed')
 
@@ -480,7 +421,7 @@ def prepare_harvest(args):
             make_dir(os.path.join(data_dir, 'pdf'))
         if args.text:
             make_dir(os.path.join(data_dir, 'text'))
-        start_harvest(data_dir=data_dir, key=args.key, query=args.query, pdf=args.pdf, text=args.text, start=0, max=args.max)
+        start_harvest(data_dir=data_dir, key=args.key, query=args.query, pdf=args.pdf, text=args.text, start='*', max=args.max)
 
 
 def start_harvest(data_dir, key, query, pdf, text, start, max):
