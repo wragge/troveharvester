@@ -12,7 +12,12 @@ TroveHarvester
 
 This is a tool for harvesting large quantities of digitised newspaper articles from `Trove <http://trove.nla.gov.au>`_.
 
-It has been tested on MacOSX and Windows 7, and should work ok with Python 2.7 and Python 3.
+It has been tested on MacOS and Windows 7, and should work ok with Python 2.7 and Python 3.
+
+No installation required!
+-------------------------
+
+If you want to use the harvester without installing anything, just head over to the `Trove Newspaper Harvester <https://github.com/GLAM-Workbench/trove-newspaper-harvester>` repository in my GLAM Workbench.
 
 Installation via Docker
 -----------------------
