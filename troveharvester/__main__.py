@@ -1,4 +1,4 @@
-"""
+'''
 TroveHarvester - A tool for harvesting digitised newspaper articles from Trove
 
 Written in 2016 by Tim Sherratt tim@discontents.com.au
@@ -6,7 +6,7 @@ Written in 2016 by Tim Sherratt tim@discontents.com.au
 To the extent possible under law, the author(s) have dedicated all copyright and related and neighboring rights to this software to the public domain worldwide. This software is distributed without any warranty.
 
 You should have received a copy of the CC0 Public Domain Dedication along with this software. If not, see <http://creativecommons.org/publicdomain/zero/1.0/>.
-"""
+'''
 
 import time
 import argparse
@@ -48,6 +48,18 @@ FIELDS = [
 
 
 class Harvester:
+    '''
+    Usage:
+
+    harvester = Harvester(
+        query_params=[required, dictionary of parameters], 
+        data_dir=[required, output path, string], 
+        pdf=[optional, True or False], 
+        text=[optional, True or False], 
+        start=[optional, Trove nextStart token, string], 
+        max=[optional, maximum number of results, integer)
+    harvester.harvest()
+    '''
     zoom = 3
     api_url = 'https://api.trove.nla.gov.au/v2/result'
 
@@ -70,27 +82,33 @@ class Harvester:
     def _get_total(self):
         params = self.query_params.copy()
         params['n'] = 0
-        response = s.get(self.api_url, params=params)
+        response = s.get(self.api_url, params=params, timeout=30)
         try:
             results = response.json()
         except (AttributeError, ValueError):
             print('No results!')
+            self.maximum = 0
         else:
             self.maximum = int(results['response']['zone'][0]['records']['total'])
 
     def log_query(self):
-        """Do something with details of query -- ie log date"""
+        '''
+        Do something with details of query -- ie log date?
+        '''
         pass
 
     def harvest(self):
+        '''
+        Start the harvest and loop over the result set until finished.
+        '''
         number = self.number
         params = self.query_params.copy()
         params['n'] = self.number
         with tqdm(total=self.maximum, unit='article') as pbar:
             while self.start and (self.harvested < self.maximum):
                 params['s'] = self.start
-                # print(current_url)
-                response = s.get(self.api_url, params=params)
+                response = s.get(self.api_url, params=params, timeout=30)
+                # print(response.url)
                 try:
                     results = response.json()
                 except (AttributeError, ValueError):
@@ -98,9 +116,14 @@ class Harvester:
                     pass
                 else:
                     records = results['response']['zone'][0]['records']
-                    self.process_results(records, pbar)
+                    self.process_results(records)
+                    pbar.update(len(records['article']))
 
     def update_meta(self, start):
+        '''
+        Update the metadata file with the current nextStart token.
+        This is needed to restart an interrupted harvest.
+        '''
         meta = get_metadata(self.data_dir)
         if meta:
             meta['start'] = start
@@ -108,17 +131,23 @@ class Harvester:
             json.dump(meta, meta_file, indent=4)
 
     def prepare_row(self, article):
+        '''
+        Flatten and reorganise article data into a single row for writing to CSV.
+        '''
         row = {}
         row['article_id'] = article['id']
         # Seems some articles don't have headings -- added 10 May 2018
+        row['title'] = article.get('heading', '')
         try:
-            row['title'] = article['heading']
-        except KeyError:
-            row['title'] = ''
-        row['newspaper_id'] = article['title']['id']
-        row['newspaper_title'] = article['title']['value']
-        row['page'] = article['pageSequence']
-        row['date'] = article['date']
+            row['newspaper_id'] = article.get('title', {}).get('id')
+        except AttributeError:
+            row['newspaper_id'] = None
+        try:
+            row['newspaper_title'] = article.get('title', {}).get('value')
+        except AttributeError:
+            row['newspaper_title'] = None
+        row['page'] = article.get('pageSequence')
+        row['date'] = article.get('date')
         row['category'] = article.get('category')
         row['words'] = article.get('wordCount')
         row['illustrated'] = article.get('illustrated')
@@ -132,6 +161,11 @@ class Harvester:
         return row
 
     def make_filename(self, article):
+        '''
+        Create a filename for a text file or PDF.
+        For easy sorting/aggregation the filename has the format:
+            PUBLICATIONDATE-NEWSPAPERID-ARTICLEID
+        '''
         date = article['date']
         date = date.replace('-', '')
         newspaper_id = article['title']['id']
@@ -139,6 +173,10 @@ class Harvester:
         return '{}-{}-{}'.format(date, newspaper_id, article_id)
 
     def ping_pdf(self, ping_url):
+        '''
+        Check to see if a PDF is ready for download.
+        If a 200 status code is received, return True.
+        '''
         ready = False
         # req = Request(ping_url)
         try:
@@ -155,27 +193,35 @@ class Harvester:
         return ready
 
     def get_pdf_url(self, article_id, zoom=3):
+        '''
+        Download the PDF version of an article.
+        These can take a while to generate, so we need to ping the server to see if it's ready before we download.
+        '''
         pdf_url = None
+        # Ask for the PDF to be created
         prep_url = 'https://trove.nla.gov.au/newspaper/rendition/nla.news-article{}/level/{}/prep'.format(article_id, zoom)
         response = s.get(prep_url)
+        # Get the hash
         prep_id = response.text
+        # Url to check if the PDF is ready
         ping_url = 'https://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.ping?followup={}'.format(article_id, zoom, prep_id)
         tries = 0
         ready = False
         time.sleep(2)  # Give some time to generate pdf
-        while ready is False and tries < 2:
+        # Are you ready yet?
+        while ready is False and tries < 5:
             ready = self.ping_pdf(ping_url)
             if not ready:
                 tries += 1
-                time.sleep(5)
+                time.sleep(2)
+        # Download if ready
         if ready:
             pdf_url = 'https://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.pdf?followup={}'.format(article_id, zoom, prep_id)
         return pdf_url
 
-    def process_results(self, records, pbar):
+    def process_results(self, records):
         '''
         Processes a page full of results.
-        Saves pdf for each result.
         '''
         try:
             articles = records['article']
@@ -205,13 +251,16 @@ class Harvester:
                             text_file = os.path.join(self.data_dir, 'text', '{}.txt'.format(text_filename))
                             with open(text_file, 'wb') as text_output:
                                 text_output.write(text.encode('utf-8'))
-                    pbar.update(1)
+                    #pbar.update(1)
             time.sleep(0.5)
-            self.harvested += int(records['n'])
+            # Update the number harvested
+            self.harvested += int(len(articles))
+            # Get the nextStart token
             try:
                 self.start = records['nextStart']
             except KeyError:
                 self.start = None
+            # Save the nextStart token to the metadata file
             self.update_meta(self.start)
             # print('Harvested: {}'.format(self.harvested))
         except KeyError:
@@ -219,6 +268,12 @@ class Harvester:
 
 
 def format_date(date, start=False):
+    '''
+    The web interface uses YYYY-MM-DD dates, but the API expects YYYY-MM-DDT00:00:00Z.
+    Reformat dates accordingly.
+    Also the start date in an API query needs to be set to the day before you want.
+    So if this is a start date, take it back in time by a day.
+    '''
     if date != '*':
         date_obj = arrow.get(date)
         if start:
@@ -228,20 +283,31 @@ def format_date(date, start=False):
 
 
 def prepare_query(query, text, api_key):
+    '''
+    Accepts either a web interface url, or an API url.
+    If it's a web interface url, try to convert the parameters into the form the API expects.
+    This is all a bit trial and error, so please raise an issue if something doesn't translate.
+    '''
+    # If it's an API request we can basically leave it alone.
     if 'api.trove.nla.gov.au' in query:
+        # If text is set to True, make sure the query is getting the article text
         if text and 'articleText' not in query:
             query += '&include=articleText'
         return query
     else:
+        # These params can be accepted as is.
         safe = ['q', 'l-category', 'l-title', 'l-decade', 'l-year', 'l-month', 'l-state']  # Note l-month doesn't work in API -- returns 0 results
         new_params = {}
         dates = {}
         keywords = []
         parsed_url = urlparse(query)
         params = parse_qsl(parsed_url.query)
+        # Loop through all the parameters
         for key, value in params:
             if key in safe:
                 if key in new_params:
+                    # There can be single or multiple values for a parameter
+                    # If multiple, save as a list
                     try:
                         new_params[key].append(value)
                     except AttributeError:
@@ -310,6 +376,7 @@ def prepare_query(query, text, api_key):
         new_params['encoding'] = 'json'
         new_params['zone'] = 'newspaper'
         new_params['reclevel'] = 'full'
+        new_params['bulkHarvest'] = 'true'
         if text:
             new_params['include'] = 'articleText'
         # return '{}?{}'.format('https://api.trove.nla.gov.au/v2/result', urlencode(new_params, doseq=True))
@@ -317,6 +384,9 @@ def prepare_query(query, text, api_key):
 
 
 def make_dir(dir):
+    '''
+    Create a directory.
+    '''
     try:
         os.makedirs(dir)
     except OSError:
@@ -325,6 +395,10 @@ def make_dir(dir):
 
 
 def save_meta(args, data_dir, harvest):
+    '''
+    Save the query metadata in a JSON file.
+    Useful for documenting your harvest.
+    '''
     meta = {}
     meta['query'] = args.query
     meta['key'] = args.key
@@ -339,6 +413,10 @@ def save_meta(args, data_dir, harvest):
 
 
 def get_harvest(args):
+    '''
+    Get the directory of a harvest.
+    If no harvest id is supplied, get the most recent.
+    '''
     if args.harvest:
         harvest = args.harvest
     else:
@@ -348,6 +426,9 @@ def get_harvest(args):
 
 
 def get_metadata(data_dir):
+    '''
+    Get the query metadata from a harvest directory.
+    '''
     try:
         with open(os.path.join(data_dir, 'metadata.json'), 'r') as meta_file:
             meta = json.load(meta_file)
@@ -358,6 +439,9 @@ def get_metadata(data_dir):
 
 
 def get_results(data_dir):
+    '''
+    Get details from a harvest's results.csv file.
+    '''
     results = {}
     try:
         with open(os.path.join(data_dir, 'results.csv'), 'rb') as csv_file:
@@ -372,6 +456,10 @@ def get_results(data_dir):
 
 
 def report_harvest(args):
+    '''
+    Provide some details of a harvest.
+    If no harvest is specified, show the most recent.
+    '''
     harvest = get_harvest(args)
     data_dir = os.path.join(os.getcwd(), 'data', harvest)
     meta = get_metadata(data_dir)
@@ -397,22 +485,30 @@ def report_harvest(args):
 
 
 def restart_harvest(args):
+    '''
+    Restart a harvest using the nextStart token saved in the metadata file.
+    '''
     harvest = get_harvest(args)
     data_dir = os.path.join(os.getcwd(), 'data', harvest)
     meta = get_metadata(data_dir)
     if meta:
-        if meta['next_start']:
+        if meta['start']:
             start_harvest(data_dir=data_dir, key=meta['key'], query=meta['query'], pdf=meta['pdf'], text=meta['text'], start=meta['start'], max=meta['max'])
         else:
             print('Harvest completed')
 
 
 def prepare_harvest(args):
+    '''
+    Route the actions appropriately.
+    If it's a new harvest, set up the directories for the results.
+    '''
     if args.action == 'report':
         report_harvest(args)
     elif args.action == 'restart':
         restart_harvest(args)
     else:
+        # Harvest directory names are timestamps
         harvest = str(int(time.time()))  # Get rid of fractions
         data_dir = os.path.join(os.getcwd(), 'data', harvest)
         make_dir(data_dir)
@@ -425,8 +521,14 @@ def prepare_harvest(args):
 
 
 def start_harvest(data_dir, key, query, pdf, text, start, max):
+    '''
+    Start a harvest.
+    '''
+    # Turn the query url into a dictionary of parameters
     params = prepare_query(query, text, key)
+    # Create the harvester
     harvester = Harvester(query_params=params, data_dir=data_dir, pdf=pdf, text=text, start=start, max=max)
+    # Go!
     harvester.harvest()
 
 
