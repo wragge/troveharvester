@@ -23,7 +23,7 @@ from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from requests.exceptions import HTTPError
 try:
-    from urllib.parse import urlparse, parse_qsl
+    from urllib.parse import urlparse, parse_qsl, parse_qs
 except ImportError:
     from urlparse import urlparse, parse_qsl
 
@@ -53,11 +53,11 @@ class Harvester:
     Usage:
 
     harvester = Harvester(
-        query_params=[required, dictionary of parameters], 
-        data_dir=[required, output path, string], 
-        pdf=[optional, True or False], 
-        text=[optional, True or False], 
-        start=[optional, Trove nextStart token, string], 
+        query_params=[required, dictionary of parameters],
+        data_dir=[required, output path, string],
+        pdf=[optional, True or False],
+        text=[optional, True or False],
+        start=[optional, Trove nextStart token, string],
         max=[optional, maximum number of results, integer)
     harvester.harvest()
     '''
@@ -289,19 +289,20 @@ def prepare_query(query, text, api_key):
     If it's a web interface url, try to convert the parameters into the form the API expects.
     This is all a bit trial and error, so please raise an issue if something doesn't translate.
     '''
-    # If it's an API request we can basically leave it alone.
-    if 'api.trove.nla.gov.au' in query:
+    if text and 'articleText' not in query:
         # If text is set to True, make sure the query is getting the article text
-        if text and 'articleText' not in query:
-            query += '&include=articleText'
-        return query
+        # Adding it here rather than to the params dict to avoid overwriting any existing include values
+        query += '&include=articleText'
+    parsed_url = urlparse(query)
+    if 'api.trove.nla.gov.au' in query:
+        # If it's an API url, no further processing of parameters needed
+        new_params = parse_qs(parsed_url.query)
     else:
         # These params can be accepted as is.
-        safe = ['q', 'l-category', 'l-title', 'l-decade', 'l-year', 'l-month', 'l-state']  # Note l-month doesn't work in API -- returns 0 results
+        safe = ['q', 'l-category', 'l-title', 'l-decade', 'l-year', 'l-month', 'l-state', 'l-illustrated', 'l-illtype', 'include']
         new_params = {}
         dates = {}
         keywords = []
-        parsed_url = urlparse(query)
         params = parse_qsl(parsed_url.query)
         # Loop through all the parameters
         for key, value in params:
@@ -332,9 +333,6 @@ def prepare_query(query, text, api_key):
                         new_params['l-state'] = [old_value, value]
                 else:
                     new_params['l-state'] = value
-            elif key == 'l-illustrated':
-                if value == 'true':
-                    new_params[key] = 'y'
             elif key == 'l-advcategory':
                 new_params['l-category'] = value
             elif key == 'l-advtitle':
@@ -373,15 +371,13 @@ def prepare_query(query, text, api_key):
                 new_params['q'] = date_query
         if 'q' not in new_params:
             new_params['q'] = ' '
-        new_params['key'] = api_key
-        new_params['encoding'] = 'json'
-        new_params['zone'] = 'newspaper'
-        new_params['reclevel'] = 'full'
-        new_params['bulkHarvest'] = 'true'
-        if text:
-            new_params['include'] = 'articleText'
-        # return '{}?{}'.format('https://api.trove.nla.gov.au/v2/result', urlencode(new_params, doseq=True))
-        return new_params
+    new_params['key'] = api_key
+    new_params['encoding'] = 'json'
+    new_params['zone'] = 'newspaper'
+    new_params['reclevel'] = 'full'
+    new_params['bulkHarvest'] = 'true'
+    # return '{}?{}'.format('https://api.trove.nla.gov.au/v2/result', urlencode(new_params, doseq=True))
+    return new_params
 
 
 def make_dir(dir):

@@ -2,45 +2,23 @@
 
 This is a tool for harvesting large quantities of digitised newspaper articles from [Trove](http://trove.nla.gov.au).
 
-It has been tested on MacOS and Windows 7, and should work ok with Python 2.7 and Python 3.
+It has been tested on MacOS and Windows 7, and should work ok with Python 3.
 
 ## Installation options
 
 ### No installation required!
 
-If you want to use the harvester without installing anything, just head over to the [Trove Newspaper Harvester](https://github.com/GLAM-Workbench/trove-newspaper-harvester) repository in my GLAM Workbench.
-
-### Installation via Docker
-
-Assuming you have Docker installed and running, just spin up a troveharvester container:
-
-``` bash
-
-    $ docker run -v $(pwd):/troveharvester/data -it wragge/troveharvester /bin/bash
-
-```
-
-Note that this will store the harvested data in the current working directory on your local filesystem.
+If you want to use the harvester without installing anything, just head over to the [Trove Newspaper Harvester](https://glam-workbench.github.io/trove-harvester/) section in my GLAM Workbench.
 
 ### Installation via pip
 
-Assuming you have Python and [Virtualenv](https://virtualenv.pypa.io/en/latest/) installed just:
+Assuming you have Python 3 installed just:
 
 ``` bash
-    $ virtualenv mytroveharvests
+    $ python3 -m venv mytroveharvests
     $ cd mytroveharvests
     $ source bin/activate
     $ pip install troveharvester
-```
-
-On Windows it should be:
-
-``` bash
-
-    > virtualenv mytroveharvests
-    > cd mytroveharvests
-    > Scripts\activate
-    > pip install troveharvester
 ```
 
 ## Basic usage
