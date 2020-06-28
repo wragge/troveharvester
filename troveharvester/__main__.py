@@ -22,6 +22,10 @@ import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from requests.exceptions import HTTPError
+from bs4 import BeautifulSoup
+from PIL import Image
+from io import BytesIO
+import re
 try:
     from urllib.parse import urlparse, parse_qsl, parse_qs
 except ImportError:
@@ -69,6 +73,7 @@ class Harvester:
         self.csv_file = os.path.join(self.data_dir, 'results.csv')
         self.pdf = kwargs.get('pdf', False)
         self.text = kwargs.get('text', False)
+        self.image = kwargs.get('image', False)
         self.api_key = kwargs.get('key')
         self.query_params = kwargs.get('query_params', None)
         self.harvested = int(kwargs.get('harvested', 0))
@@ -84,6 +89,7 @@ class Harvester:
         params = self.query_params.copy()
         params['n'] = 0
         response = s.get(self.api_url, params=params, timeout=30)
+        # print(response.url)
         try:
             results = response.json()
         except (AttributeError, ValueError):
@@ -117,8 +123,8 @@ class Harvester:
                     pass
                 else:
                     records = results['response']['zone'][0]['records']
-                    self.process_results(records)
-                    pbar.update(len(records['article']))
+                    self.process_results(records, pbar)
+                    # pbar.update(len(records['article']))
 
     def update_meta(self, start):
         '''
@@ -220,7 +226,84 @@ class Harvester:
             pdf_url = 'https://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.pdf?followup={}'.format(article_id, zoom, prep_id)
         return pdf_url
 
-    def process_results(self, records):
+    def get_box(self, zones):
+        '''
+        Loop through all the zones to find the outer limits of each boundary.
+        Return a bounding box around the article.
+        '''
+        left = 10000
+        right = 0
+        top = 10000
+        bottom = 0
+        page_id = zones[0]['data-page-id']
+        for zone in zones:
+            if int(zone['data-y']) < top:
+                top = int(zone['data-y'])
+            if int(zone['data-x']) < left:
+                left = int(zone['data-x'])
+            if (int(zone['data-x']) + int(zone['data-w'])) > right:
+                right = int(zone['data-x']) + int(zone['data-w'])
+            if (int(zone['data-y']) + int(zone['data-h'])) > bottom:
+                bottom = int(zone['data-y']) + int(zone['data-h'])
+        return {'page_id': page_id, 'left': left, 'top': top, 'right': right, 'bottom': bottom}
+
+    def get_article_boxes(self, article_url):
+        '''
+        Positional information about the article is attached to each line of the OCR output in data attributes.
+        This function loads the HTML version of the article and scrapes the x, y, and width values for each line of text
+        to determine the coordinates of a box around the article.
+        '''
+        boxes = []
+        response = requests.get(article_url)
+        soup = BeautifulSoup(response.text, 'lxml')
+        # Lines of OCR are in divs with the class 'zone'
+        # 'onPage' limits to those on the current page
+        zones = soup.select('div.zone.onPage')
+        boxes.append(self.get_box(zones))
+        off_page_zones = soup.select('div.zone.offPage')
+        if off_page_zones:
+            current_page = off_page_zones[0]['data-page-id']
+            zones = []
+            for zone in off_page_zones:
+                if zone['data-page-id'] == current_page:
+                    zones.append(zone)
+                else:
+                    boxes.append(self.get_box(zones))
+                    zones = [zone]
+                    current_page = zone['data-page-id']
+            boxes.append(self.get_box(zones))
+        return boxes
+
+    def get_page_images(self, article, size=3000):
+        '''
+        Extract an image of the article from the page image(s), save it, and return the filename(s).
+        '''
+        images = []
+        # Get position of article on the page(s)
+        boxes = self.get_article_boxes('http://nla.gov.au/nla.news-article{}'.format(article['id']))
+        image_filename = self.make_filename(article)
+        for box in boxes:
+            # print(box)
+            # Construct the url we need to download the page image
+            page_url = 'https://trove.nla.gov.au/ndp/imageservice/nla.news-page{}/level{}'.format(box['page_id'], 7)
+            # Download the page image
+            response = requests.get(page_url)
+            # Open download as an image for editing
+            img = Image.open(BytesIO(response.content))
+            # Use coordinates of top line to create a square box to crop thumbnail
+            points = (box['left'], box['top'], box['right'], box['bottom'])
+            # Crop image to article box
+            cropped = img.crop(points)
+            # Resize if necessary
+            if size:
+                cropped.thumbnail((size, size), Image.ANTIALIAS)
+            # Save and display thumbnail
+            cropped_file = os.path.join(self.data_dir, 'image', '{}-{}.jpg'.format(image_filename, box['page_id']))
+            cropped.save(cropped_file)
+            images.append(cropped_file)
+        return images
+
+    def process_results(self, records, pbar):
         '''
         Processes a page full of results.
         '''
@@ -252,7 +335,9 @@ class Harvester:
                             text_file = os.path.join(self.data_dir, 'text', '{}.txt'.format(text_filename))
                             with open(text_file, 'wb') as text_output:
                                 text_output.write(text.encode('utf-8'))
-                    #pbar.update(1)
+                    if self.image:
+                        images = self.get_page_images(article)
+                    pbar.update(1)
             time.sleep(0.5)
             # Update the number harvested
             self.harvested += int(len(articles))
@@ -299,7 +384,7 @@ def prepare_query(query, text, api_key):
         new_params = parse_qs(parsed_url.query)
     else:
         # These params can be accepted as is.
-        safe = ['q', 'l-category', 'l-title', 'l-decade', 'l-year', 'l-month', 'l-state', 'l-illustrated', 'l-illtype', 'include']
+        safe = ['l-category', 'l-title', 'l-decade', 'l-year', 'l-month', 'l-state', 'l-word', 'include']
         new_params = {}
         dates = {}
         keywords = []
@@ -307,53 +392,50 @@ def prepare_query(query, text, api_key):
         # Loop through all the parameters
         for key, value in params:
             if key in safe:
-                if key in new_params:
-                    # There can be single or multiple values for a parameter
-                    # If multiple, save as a list
-                    try:
-                        new_params[key].append(value)
-                    except AttributeError:
-                        old_value = new_params[key]
-                        new_params[key] = [old_value, value]
-                else:
-                    new_params[key] = value
-            elif key == 'l-word':
-                if '<100 Words' in value:
-                    new_params[key] = '0'
-                elif '100 - 1000 Words' in value:
-                    new_params[key] = '1'
-                elif '1000+ Words' in value:
-                    new_params[key] = '3'
+                try:
+                    new_params[key].append(value)
+                except KeyError:
+                    new_params[key] = [value]
+            elif key == 'l-advWord':
+                new_params['l-word'] = value
             elif key == 'l-advstate':
-                if 'l-state' in new_params:
-                    try:
-                        new_params['l-state'].append(value)
-                    except AttributeError:
-                        old_value = new_params['l-state']
-                        new_params['l-state'] = [old_value, value]
-                else:
-                    new_params['l-state'] = value
+                try:
+                    new_params['l-state'].append(value)
+                except KeyError:
+                    new_params['l-state'] = [value]
             elif key == 'l-advcategory':
-                new_params['l-category'] = value
+                try:
+                    new_params['l-category'].append(value)
+                except KeyError:
+                    new_params['l-category'] = [value]
             elif key == 'l-advtitle':
-                if 'l-title' in new_params:
-                    try:
-                        new_params['l-title'].append(value)
-                    except AttributeError:
-                        old_value = new_params['l-title']
-                        new_params['l-title'] = [old_value, value]
-                else:
-                    new_params['l-title'] = value
-            elif key == 'dateFrom':
+                try:
+                    new_params['l-title'].append(value)
+                except KeyError:
+                    new_params['l-title'] = [value]
+            elif key in ['l-illustrationType', 'l-advIllustrationType']:
+                new_params['l-illustrated'] = 'true'
+                try:
+                    new_params['l-illtype'].append(value)
+                except KeyError:
+                    new_params['l-illtype'] = [value]
+            elif key == 'date.from':
                 dates['from'] = value
-            elif key == 'dateTo':
+            elif key == 'date.to':
                 dates['to'] = value
-            elif key == 'exactPhrase':
+            elif key == 'keyword':
+                new_params['q'] = value
+            elif key == 'keyword.phrase':
                 keywords.append('"{}"'.format(value))
-            elif key == 'notWords':
+            elif key == 'keyword.not':
                 keywords.append('NOT ({})'.format(' OR '.join(value.split())))
-            elif key == 'anyWords':
+            elif key == 'keyword.any':
                 keywords.append('({})'.format(' OR '.join(value.split())))
+            elif key in ['l-ArtType', 'l-advArtType']:
+                if value == 'newspapers':
+                    new_params['zone'] = 'newspaper'
+                elif value == 'gazette':
+                    new_params['zone'] = 'gazette'
         if keywords:
             if 'q' in new_params:
                 new_params['q'] += ' AND {}'.format(' AND '.join(keywords))
@@ -371,9 +453,10 @@ def prepare_query(query, text, api_key):
                 new_params['q'] = date_query
         if 'q' not in new_params:
             new_params['q'] = ' '
+        if 'zone' not in new_params:
+            new_params['zone'] = 'newspaper'
     new_params['key'] = api_key
     new_params['encoding'] = 'json'
-    new_params['zone'] = 'newspaper'
     new_params['reclevel'] = 'full'
     new_params['bulkHarvest'] = 'true'
     # return '{}?{}'.format('https://api.trove.nla.gov.au/v2/result', urlencode(new_params, doseq=True))
@@ -402,6 +485,7 @@ def save_meta(args, data_dir, harvest):
     meta['max'] = args.max
     meta['pdf'] = args.pdf
     meta['text'] = args.text
+    meta['image'] = args.image
     meta['harvest'] = harvest
     meta['date_started'] = datetime.datetime.now().isoformat()
     meta['start'] = '*'
@@ -472,6 +556,7 @@ def report_harvest(args):
         print('Max results: {}'.format(meta['max']))
         print('Include PDFs: {}'.format(meta['pdf']))
         print('Include text: {}'.format(meta['text']))
+        print('Include images: {}'.format(meta['image']))
         print('')
         print('HARVEST PROGRESS')
         print('================')
@@ -514,17 +599,19 @@ def prepare_harvest(args):
             make_dir(os.path.join(data_dir, 'pdf'))
         if args.text:
             make_dir(os.path.join(data_dir, 'text'))
-        start_harvest(data_dir=data_dir, key=args.key, query=args.query, pdf=args.pdf, text=args.text, start='*', max=args.max)
+        if args.image:
+            make_dir(os.path.join(data_dir, 'image'))
+        start_harvest(data_dir=data_dir, key=args.key, query=args.query, pdf=args.pdf, text=args.text, image=args.image, start='*', max=args.max)
 
 
-def start_harvest(data_dir, key, query, pdf, text, start, max):
+def start_harvest(data_dir, key, query, pdf, text, image, start, max):
     '''
     Start a harvest.
     '''
     # Turn the query url into a dictionary of parameters
     params = prepare_query(query, text, key)
     # Create the harvester
-    harvester = Harvester(query_params=params, data_dir=data_dir, pdf=pdf, text=text, start=start, max=max)
+    harvester = Harvester(query_params=params, data_dir=data_dir, pdf=pdf, text=text, image=image, start=start, max=max)
     # Go!
     harvester.harvest()
 
@@ -542,6 +629,7 @@ def main():
     parser_start.add_argument('--max', type=int, default=0, help='Maximum number of results to return')
     parser_start.add_argument('--pdf', action="store_true", help='Save PDFs of articles')
     parser_start.add_argument('--text', action="store_true", help='Save text contents of articles')
+    parser_start.add_argument('--image', action="store_true", help='Save images of articles')
     args = parser.parse_args()
     prepare_harvest(args)
 
