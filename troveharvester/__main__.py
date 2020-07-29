@@ -431,7 +431,7 @@ def prepare_query(query, text, api_key):
                 keywords.append('NOT ({})'.format(' OR '.join(value.split())))
             elif key == 'keyword.any':
                 keywords.append('({})'.format(' OR '.join(value.split())))
-            elif key in ['l-ArtType', 'l-advArtType']:
+            elif key in ['l-ArtType', 'l-advArtType', 'l-artType']:
                 if value == 'newspapers':
                     new_params['zone'] = 'newspaper'
                 elif value == 'gazette':
