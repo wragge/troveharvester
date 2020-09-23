@@ -47,6 +47,7 @@ FIELDS = [
     'words',
     'illustrated',
     'corrections',
+    'snippet',
     'url',
     'page_url'
 ]
@@ -159,6 +160,7 @@ class Harvester:
         row['words'] = article.get('wordCount')
         row['illustrated'] = article.get('illustrated')
         row['corrections'] = article.get('correctionCount')
+        row['snippet'] = article.get('snippet')
         row['url'] = article.get('identifier')
         if 'trovePageUrl' in article:
             page_id = re.search(r'page\/(\d+)', article['trovePageUrl']).group(1)
