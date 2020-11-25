@@ -26,6 +26,7 @@ from bs4 import BeautifulSoup
 from PIL import Image
 from io import BytesIO
 import re
+import html2text
 try:
     from urllib.parse import urlparse, parse_qsl, parse_qs
 except ImportError:
@@ -62,6 +63,7 @@ class Harvester:
         data_dir=[required, output path, string],
         pdf=[optional, True or False],
         text=[optional, True or False],
+        include_linebreaks=[optional, True or False],
         start=[optional, Trove nextStart token, string],
         max=[optional, maximum number of results, integer)
     harvester.harvest()
@@ -75,6 +77,7 @@ class Harvester:
         self.pdf = kwargs.get('pdf', False)
         self.text = kwargs.get('text', False)
         self.image = kwargs.get('image', False)
+        self.include_linebreaks = kwargs.get('include_linebreaks', False)
         self.api_key = kwargs.get('key')
         self.query_params = kwargs.get('query_params', None)
         self.harvested = int(kwargs.get('harvested', 0))
@@ -305,6 +308,17 @@ class Harvester:
             images.append(cropped_file)
         return images
 
+    def get_aww_text(self, article_id):
+        # Download text using the link from the web interface
+        url = f'https://trove.nla.gov.au/newspaper/rendition/nla.news-article{article_id}.txt'
+        response = s.get(url)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'lxml')
+            # Remove the header
+            soup.find('p').decompose()
+            soup.find('hr').decompose()
+            return str(soup)
+
     def process_results(self, records, pbar):
         '''
         Processes a page full of results.
@@ -329,11 +343,15 @@ class Harvester:
                                 for chunk in response.iter_content(chunk_size=128):
                                     pf.write(chunk)
                     if self.text:
-                        text = article.get('articleText')
-                        if text:
+                        html_text = article.get('articleText')
+                        if not html_text:
+                            # If the text isn't in the API response (as with AWW), download separately
+                            html_text = self.get_aww_text(article_id)
+                        if html_text:
                             text_filename = self.make_filename(article)
-                            text = re.sub('<[^<]+?>', '', text)
-                            text = re.sub("\s\s+", " ", text)
+                            text = html2text.html2text(html_text)
+                            if self.include_linebreaks == False:
+                                text = re.sub("\s+", " ", text)
                             text_file = os.path.join(self.data_dir, 'text', '{}.txt'.format(text_filename))
                             with open(text_file, 'wb') as text_output:
                                 text_output.write(text.encode('utf-8'))
@@ -488,6 +506,7 @@ def save_meta(args, data_dir, harvest):
     meta['pdf'] = args.pdf
     meta['text'] = args.text
     meta['image'] = args.image
+    meta['include_linebreaks'] = args.include_linebreaks
     meta['harvest'] = harvest
     meta['date_started'] = datetime.datetime.now().isoformat()
     meta['start'] = '*'
@@ -559,6 +578,7 @@ def report_harvest(args):
         print('Include PDFs: {}'.format(meta['pdf']))
         print('Include text: {}'.format(meta['text']))
         print('Include images: {}'.format(meta['image']))
+        print('Include linebreaks: {}'.format(meta['include_linebreaks']))
         print('')
         print('HARVEST PROGRESS')
         print('================')
@@ -603,17 +623,17 @@ def prepare_harvest(args):
             make_dir(os.path.join(data_dir, 'text'))
         if args.image:
             make_dir(os.path.join(data_dir, 'image'))
-        start_harvest(data_dir=data_dir, key=args.key, query=args.query, pdf=args.pdf, text=args.text, image=args.image, start='*', max=args.max)
+        start_harvest(data_dir=data_dir, key=args.key, query=args.query, pdf=args.pdf, text=args.text, image=args.image, include_linebreaks=args.include_linebreaks, start='*', max=args.max)
 
 
-def start_harvest(data_dir, key, query, pdf, text, image, start, max):
+def start_harvest(data_dir, key, query, pdf, text, image, include_linebreaks, start, max):
     '''
     Start a harvest.
     '''
     # Turn the query url into a dictionary of parameters
     params = prepare_query(query, text, key)
     # Create the harvester
-    harvester = Harvester(query_params=params, data_dir=data_dir, pdf=pdf, text=text, image=image, start=start, max=max)
+    harvester = Harvester(query_params=params, data_dir=data_dir, pdf=pdf, text=text, image=image, include_linebreaks=include_linebreaks, start=start, max=max)
     # Go!
     harvester.harvest()
 
@@ -632,6 +652,7 @@ def main():
     parser_start.add_argument('--pdf', action="store_true", help='Save PDFs of articles')
     parser_start.add_argument('--text', action="store_true", help='Save text contents of articles')
     parser_start.add_argument('--image', action="store_true", help='Save images of articles')
+    parser_start.add_argument('--include_linebreaks', action="store_true", help='Preserve line breaks in text files')
     args = parser.parse_args()
     prepare_harvest(args)
 

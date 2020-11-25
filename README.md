@@ -67,6 +67,9 @@ Options:
 --image
     save an image of each article into a separate ``.jpg`` file (if the article is split over more than one page there will be multiple images)
 
+--include_linebreaks
+    preserve linebreaks in saved text files
+
 ### Restart a harvest
 
 Things go wrong and harvests get interrupted. If your harvest stops before it should, you can just do:
