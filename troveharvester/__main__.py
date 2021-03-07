@@ -597,7 +597,7 @@ def restart_harvest(args):
     meta = get_metadata(data_dir)
     if meta:
         if meta['start']:
-            start_harvest(data_dir=data_dir, key=meta['key'], query=meta['query'], pdf=meta['pdf'], text=meta['text'], start=meta['start'], max=meta['max'])
+            start_harvest(data_dir=data_dir, key=meta['key'], query=meta['query'], pdf=meta['pdf'], text=meta['text'], image=meta['image'], include_linebreaks=meta['include_linebreaks'], start=meta['start'], max=meta['max'])
         else:
             print('Harvest completed')
 
