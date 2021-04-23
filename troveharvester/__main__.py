@@ -17,7 +17,6 @@ from tqdm import tqdm
 import json
 from pprint import pprint
 import re
-import unicodecsv as csv
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
@@ -27,6 +26,7 @@ from PIL import Image
 from io import BytesIO
 import re
 import html2text
+import pandas as pd
 try:
     from urllib.parse import urlparse, parse_qsl, parse_qs
 except ImportError:
@@ -80,9 +80,14 @@ class Harvester:
         self.include_linebreaks = kwargs.get('include_linebreaks', False)
         self.api_key = kwargs.get('key')
         self.query_params = kwargs.get('query_params', None)
-        self.harvested = int(kwargs.get('harvested', 0))
-        self.number = int(kwargs.get('number', 100))
         self.start = kwargs.get('start', '*')
+        # If we're restarting a harvest get the number of rows already harvested
+        if self.start != '*':
+            self.harvested = pd.read_csv(self.csv_file).shape[0]
+        else:
+            self.harvested = 0
+        self.number = int(kwargs.get('number', 100))
+
         max_results = kwargs.get('max')
         if max_results:
             self.maximum = max_results
@@ -116,6 +121,7 @@ class Harvester:
         params = self.query_params.copy()
         params['n'] = self.number
         with tqdm(total=self.maximum, unit='article') as pbar:
+            pbar.update(self.harvested)
             while self.start and (self.harvested < self.maximum):
                 params['s'] = self.start
                 response = s.get(self.api_url, params=params, timeout=30)
@@ -323,44 +329,55 @@ class Harvester:
         '''
         Processes a page full of results.
         '''
+        rows = []
         try:
             articles = records['article']
-            with open(self.csv_file, 'ab') as csv_file:
-                writer = csv.DictWriter(csv_file, FIELDS, encoding='utf-8')
-                if self.harvested == 0:
-                    writer.writeheader()
-                for article in articles:
-                    article_id = article['id']
-                    row = self.prepare_row(article)
-                    writer.writerow(row)
-                    if self.pdf:
-                        pdf_url = self.get_pdf_url(article_id)
-                        if pdf_url:
-                            pdf_filename = self.make_filename(article)
-                            pdf_file = os.path.join(self.data_dir, 'pdf', '{}.pdf'.format(pdf_filename))
-                            response = s.get(pdf_url, stream=True)
-                            with open(pdf_file, 'wb') as pf:
-                                for chunk in response.iter_content(chunk_size=128):
-                                    pf.write(chunk)
-                    if self.text:
-                        html_text = article.get('articleText')
-                        if not html_text:
-                            # If the text isn't in the API response (as with AWW), download separately
-                            html_text = self.get_aww_text(article_id)
-                        if html_text:
-                            text_filename = self.make_filename(article)
-                            text = html2text.html2text(html_text)
-                            if self.include_linebreaks == False:
-                                text = re.sub("\s+", " ", text)
-                            text_file = os.path.join(self.data_dir, 'text', '{}.txt'.format(text_filename))
-                            with open(text_file, 'wb') as text_output:
-                                text_output.write(text.encode('utf-8'))
-                    if self.image:
-                        images = self.get_page_images(article)
-                    pbar.update(1)
-            time.sleep(0.5)
+        except KeyError:
+            raise
+        else:
+            for article in articles:
+                article_id = article['id']
+                rows.append(self.prepare_row(article))
+
+                if self.pdf:
+                    pdf_url = self.get_pdf_url(article_id)
+                    if pdf_url:
+                        pdf_filename = self.make_filename(article)
+                        pdf_file = os.path.join(self.data_dir, 'pdf', '{}.pdf'.format(pdf_filename))
+                        response = s.get(pdf_url, stream=True)
+                        with open(pdf_file, 'wb') as pf:
+                            for chunk in response.iter_content(chunk_size=128):
+                                pf.write(chunk)
+
+                if self.text:
+                    html_text = article.get('articleText')
+                    if not html_text:
+                        # If the text isn't in the API response (as with AWW), download separately
+                        html_text = self.get_aww_text(article_id)
+                    if html_text:
+                        text_filename = self.make_filename(article)
+                        text = html2text.html2text(html_text)
+                        if self.include_linebreaks == False:
+                            text = re.sub("\s+", " ", text)
+                        text_file = os.path.join(self.data_dir, 'text', '{}.txt'.format(text_filename))
+                        with open(text_file, 'wb') as text_output:
+                            text_output.write(text.encode('utf-8'))
+
+                if self.image:
+                    images = self.get_page_images(article)
+
+                pbar.update(1)
+
+            new_df = pd.DataFrame(rows)
+            try:
+                old_df = pd.read_csv(self.csv_file)
+                results_df = old_df.append(new_df, ignore_index=True).drop_duplicates()
+            except FileNotFoundError:
+                results_df = new_df
+            results_df.to_csv(self.csv_file, index=False)
+            time.sleep(0.2)
             # Update the number harvested
-            self.harvested += int(len(articles))
+            self.harvested = results_df.shape[0]
             # Get the nextStart token
             try:
                 self.start = records['nextStart']
@@ -369,8 +386,6 @@ class Harvester:
             # Save the nextStart token to the metadata file
             self.update_meta(self.start)
             # print('Harvested: {}'.format(self.harvested))
-        except KeyError:
-            raise
 
 
 def format_date(date, start=False):
@@ -546,12 +561,11 @@ def get_results(data_dir):
     '''
     results = {}
     try:
-        with open(os.path.join(data_dir, 'results.csv'), 'rb') as csv_file:
-                reader = csv.reader(csv_file, delimiter=',', encoding='utf-8')
-                rows = list(reader)
-                results['num_rows'] = len(rows) - 1
-                results['last_row'] = rows[-1]
-    except IOError:
+        csv_file = os.path.join(data_dir, 'results.csv')
+        df_results = pd.read_csv(csv_file)
+        results['num_rows'] = df_results.shape[0]
+        results['last_row'] = df_results.to_dict(orient='records')[0]
+    except FileNotFoundError:
         results['num_rows'] = 0
         results['last_row'] = None
     return results
