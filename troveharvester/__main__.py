@@ -31,6 +31,8 @@ try:
     from urllib.parse import urlparse, parse_qsl, parse_qs
 except ImportError:
     from urlparse import urlparse, parse_qsl
+from pathlib import Path
+from trove_query_parser.parser import parse_query
 
 s = requests.Session()
 retries = Retry(total=5, backoff_factor=1, status_forcelist=[ 500, 502, 503, 504 ])
@@ -52,7 +54,6 @@ FIELDS = [
     'url',
     'page_url'
 ]
-
 
 class Harvester:
     '''
@@ -237,6 +238,10 @@ class Harvester:
             pdf_url = 'https://trove.nla.gov.au/newspaper/rendition/nla.news-article{}.{}.pdf?followup={}'.format(article_id, zoom, prep_id)
         return pdf_url
 
+    # I'd like to be able to make use to trove-newspaper-images instead of the code below
+    # But there seems to be a clash between fastcore & argparse (or something like that)
+    # Can't get it to work ATM
+
     def get_box(self, zones):
         '''
         Loop through all the zones to find the outer limits of each boundary.
@@ -284,7 +289,7 @@ class Harvester:
                     current_page = zone['data-page-id']
             boxes.append(self.get_box(zones))
         return boxes
-
+    
     def get_page_images(self, article, size=3000):
         '''
         Extract an image of the article from the page image(s), save it, and return the filename(s).
@@ -371,7 +376,7 @@ class Harvester:
             new_df = pd.DataFrame(rows)
             try:
                 old_df = pd.read_csv(self.csv_file)
-                results_df = old_df.append(new_df, ignore_index=True).drop_duplicates()
+                results_df = pd.concat([old_df, new_df], ignore_index=True).drop_duplicates()
             except FileNotFoundError:
                 results_df = new_df
             results_df.to_csv(self.csv_file, index=False)
@@ -419,81 +424,15 @@ def prepare_query(query, text, api_key):
         new_params = parse_qs(parsed_url.query)
     else:
         # These params can be accepted as is.
-        safe = ['l-category', 'l-title', 'l-decade', 'l-year', 'l-month', 'l-state', 'l-word', 'include']
-        new_params = {}
-        dates = {}
-        keywords = []
-        params = parse_qsl(parsed_url.query)
-        # Loop through all the parameters
-        for key, value in params:
-            if key in safe:
-                try:
-                    new_params[key].append(value)
-                except KeyError:
-                    new_params[key] = [value]
-            elif key == 'l-advWord':
-                new_params['l-word'] = value
-            elif key == 'l-advstate':
-                try:
-                    new_params['l-state'].append(value)
-                except KeyError:
-                    new_params['l-state'] = [value]
-            elif key == 'l-advcategory':
-                try:
-                    new_params['l-category'].append(value)
-                except KeyError:
-                    new_params['l-category'] = [value]
-            elif key == 'l-advtitle':
-                try:
-                    new_params['l-title'].append(value)
-                except KeyError:
-                    new_params['l-title'] = [value]
-            elif key in ['l-illustrationType', 'l-advIllustrationType']:
-                new_params['l-illustrated'] = 'true'
-                try:
-                    new_params['l-illtype'].append(value)
-                except KeyError:
-                    new_params['l-illtype'] = [value]
-            elif key == 'date.from':
-                dates['from'] = value
-            elif key == 'date.to':
-                dates['to'] = value
-            elif key == 'keyword':
-                new_params['q'] = value
-            elif key == 'keyword.phrase':
-                keywords.append('"{}"'.format(value))
-            elif key == 'keyword.not':
-                keywords.append('NOT ({})'.format(' OR '.join(value.split())))
-            elif key == 'keyword.any':
-                keywords.append('({})'.format(' OR '.join(value.split())))
-            elif key in ['l-ArtType', 'l-advArtType', 'l-artType']:
-                if value == 'newspapers':
-                    new_params['zone'] = 'newspaper'
-                elif value == 'gazette':
-                    new_params['zone'] = 'gazette'
-        if keywords:
-            if 'q' in new_params:
-                new_params['q'] += ' AND {}'.format(' AND '.join(keywords))
-            else:
-                new_params['q'] = ' AND '.join(keywords)
-        if dates:
-            if 'from' not in dates:
-                dates['from'] = '*'
-            if 'to' not in dates:
-                dates['to'] = '*'
-            date_query = 'date:[{} TO {}]'.format(format_date(dates['from'], True), format_date(dates['to']))
-            if 'q' in new_params:
-                new_params['q'] += ' {}'.format(date_query)
-            else:
-                new_params['q'] = date_query
-        if 'q' not in new_params:
-            new_params['q'] = ' '
-        if 'zone' not in new_params:
-            new_params['zone'] = 'newspaper'
+        new_params = parse_query(query)
     new_params['key'] = api_key
     new_params['encoding'] = 'json'
     new_params['reclevel'] = 'full'
     new_params['bulkHarvest'] = 'true'
+    # The query parser defaults to 'newspaper,gazette' if no zone is set.
+    # But multiple zones won't work with bulkHarvest, so set to 'newspaper'.
+    if new_params['zone'] == 'newspaper,gazette':
+        new_params['zone'] = 'newspaper'
     # return '{}?{}'.format('https://api.trove.nla.gov.au/v2/result', urlencode(new_params, doseq=True))
     return new_params
 
