@@ -560,6 +560,7 @@ def prepare_harvest(args):
     Route the actions appropriately.
     If it's a new harvest, set up the directories for the results.
     '''
+    print('\nWARNING! This tool is out-of-date, please replace the troveharvester package with the new trove-newspaper-harvester: https://pypi.org/project/trove-newspaper-harvester/\n')
     if args.action == 'report':
         report_harvest(args)
     elif args.action == 'restart':

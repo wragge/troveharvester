@@ -7,9 +7,9 @@ with open(path.join(this_directory, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 setup(name='troveharvester',
-      version='0.5.1',
+      version='0.5.2',
       packages=['troveharvester'],
-      description='Tool for harvesting Trove digitised newspaper articles.',
+      description='This tool is now archived, see trove-newspaper-harvester instead.',
       long_description=long_description,
       long_description_content_type='text/markdown',
       author='Tim Sherratt',
